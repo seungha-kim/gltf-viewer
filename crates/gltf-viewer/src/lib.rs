@@ -17,7 +17,8 @@ struct State {
     config: wgpu::SurfaceConfiguration,
     size: winit::dpi::PhysicalSize<u32>,
     render_pipeline: wgpu::RenderPipeline,
-    vertex_buffer: wgpu::Buffer,
+    vertex_position_buffer: wgpu::Buffer,
+    vertex_tex_coord_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     num_indices: u32,
     diffuse_bind_group: wgpu::BindGroup,
@@ -55,32 +56,64 @@ impl CameraUniform {
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-struct Vertex {
-    position: [f32; 3],
-    tex_coords: [f32; 2],
-}
+struct VertexPosition([f32; 3]);
 
-impl Vertex {
-    const ATTRIBS: [wgpu::VertexAttribute; 2] =
-        wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2];
-
+impl VertexPosition {
     fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
         use std::mem;
 
         wgpu::VertexBufferLayout {
             array_stride: mem::size_of::<Self>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &Self::ATTRIBS,
+            attributes: &[
+                wgpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 0,
+                    format: wgpu::VertexFormat::Float32x3,
+                },
+            ]
         }
     }
 }
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+struct VertexTexCoord([f32; 2]);
+
+impl VertexTexCoord {
+    fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
+        use std::mem;
+
+        wgpu::VertexBufferLayout {
+            array_stride: mem::size_of::<Self>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &[
+                wgpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 1,
+                    format: wgpu::VertexFormat::Float32x2,
+                },
+            ]
+        }
+    }
+}
+
 #[rustfmt::skip]
-const VERTICES: &[Vertex] = &[
-    Vertex { position: [-0.0868241, 0.49240386, 0.0], tex_coords: [0.4131759, 0.00759614], },
-    Vertex { position: [-0.49513406, 0.06958647, 0.0], tex_coords: [0.0048659444, 0.43041354], },
-    Vertex { position: [-0.21918549, -0.44939706, 0.0], tex_coords: [0.28081453, 0.949397], },
-    Vertex { position: [0.35966998, -0.3473291, 0.0], tex_coords: [0.85967, 0.84732914], },
-    Vertex { position: [0.44147372, 0.2347359, 0.0], tex_coords: [0.9414737, 0.2652641], },
+const VERTEX_POSITIONS: &[VertexPosition] = &[
+    VertexPosition([-0.0868241, 0.49240386, 0.0]),
+    VertexPosition([-0.49513406, 0.06958647, 0.0]),
+    VertexPosition([-0.21918549, -0.44939706, 0.0]),
+    VertexPosition([0.35966998, -0.3473291, 0.0]),
+    VertexPosition([0.44147372, 0.2347359, 0.0]),
+];
+
+#[rustfmt::skip]
+const VERTEX_TEX_COORDS: &[VertexTexCoord] = &[
+    VertexTexCoord([0.4131759, 0.00759614]),
+    VertexTexCoord([0.0048659444, 0.43041354]),
+    VertexTexCoord([0.28081453, 0.949397]),
+    VertexTexCoord([0.85967, 0.84732914]),
+    VertexTexCoord([0.9414737, 0.2652641]),
 ];
 
 #[rustfmt::skip]
@@ -236,7 +269,10 @@ impl State {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: "vs_main",
-                buffers: &[Vertex::desc()],
+                buffers: &[
+                    VertexPosition::desc(),
+                    VertexTexCoord::desc(),
+                ],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
@@ -268,9 +304,15 @@ impl State {
             multiview: None,
         });
 
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Vertex Buffer"),
-            contents: bytemuck::cast_slice(VERTICES),
+        let vertex_position_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Vertex Position Buffer"),
+            contents: bytemuck::cast_slice(VERTEX_POSITIONS),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
+        let vertex_tex_coord_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Vertex Position Buffer"),
+            contents: bytemuck::cast_slice(VERTEX_TEX_COORDS),
             usage: wgpu::BufferUsages::VERTEX,
         });
 
@@ -291,7 +333,8 @@ impl State {
             config,
             size,
             render_pipeline,
-            vertex_buffer,
+            vertex_position_buffer,
+            vertex_tex_coord_buffer,
             index_buffer,
             num_indices,
             diffuse_bind_group,
@@ -381,7 +424,8 @@ impl State {
             render_pass.set_pipeline(&self.render_pipeline);
             render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
             render_pass.set_bind_group(1, &self.camera_bind_group, &[]);
-            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            render_pass.set_vertex_buffer(0, self.vertex_position_buffer.slice(..));
+            render_pass.set_vertex_buffer(1, self.vertex_tex_coord_buffer.slice(..));
             render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
             render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
         }
