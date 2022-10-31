@@ -1,45 +1,41 @@
-use cgmath::prelude::*;
-use cgmath::{Matrix4, Vector3};
-use std::collections::HashMap;
+use cgmath::*;
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-struct Id(usize);
-
-impl From<usize> for Id {
-    fn from(id: usize) -> Self {
-        Self(id)
-    }
+pub struct ModelRoot {
+    pub default_scene_id: usize,
+    pub scenes: Vec<Scene>,
+    pub nodes: Vec<Node>,
+    pub meshes: Vec<Mesh>,
+    pub materials: Vec<Material>,
 }
 
-struct ModelAsset {
-    default_scene_id: Id,
-    scenes: HashMap<Id, Node>,
-    objects: HashMap<Id, Node>,
-    meshes: HashMap<Id, Mesh>,
-    prims: HashMap<Id, MeshPrim>,
-    materials: HashMap<Id, Material>,
+#[derive(Debug)]
+pub struct Scene {
+    pub id: usize,
+    pub nodes: Vec<usize>,
 }
 
-struct Scene {
-    id: Id,
+#[derive(Debug)]
+pub struct Node {
+    pub id: usize,
+    pub transform: Matrix4<f32>,
+    pub children: Vec<usize>,
 }
 
-struct Node {
-    id: Id,
-    transform: Matrix4<f32>,
+#[derive(Debug)]
+pub struct Mesh {
+    pub id: usize,
+    pub primitives: Vec<Option<MeshPrimitive>>,
 }
 
-struct Mesh {
-    id: Id,
-    prims: Vec<Id>,
+#[derive(Debug)]
+pub struct MeshPrimitive {
+    pub id: usize,
+    pub position_buffer: wgpu::Buffer,
+    pub index_buffer: wgpu::Buffer,
+    pub material_id: Option<usize>,
 }
 
-struct MeshPrim {
-    id: Id,
-    vertex_buffer: wgpu::Buffer,
-    index_buffer: wgpu::Buffer,
-}
-
-struct Material {
-    id: Id,
+#[derive(Debug)]
+pub struct Material {
+    pub id: usize,
 }

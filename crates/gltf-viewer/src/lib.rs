@@ -1,6 +1,7 @@
 mod texture;
 mod camera;
 mod model;
+mod import;
 
 use wgpu::include_wgsl;
 use wgpu::util::DeviceExt;
@@ -8,6 +9,7 @@ use winit::event_loop::ControlFlow;
 use winit::window::Window;
 use winit::{event::*, event_loop::EventLoop, window::WindowBuilder};
 use cgmath::*;
+use crate::import::{GltfRoot, import_gltf};
 
 
 struct State {
