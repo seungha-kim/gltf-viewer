@@ -1,5 +1,6 @@
 mod texture;
 mod camera;
+mod model;
 
 use wgpu::include_wgsl;
 use wgpu::util::DeviceExt;
