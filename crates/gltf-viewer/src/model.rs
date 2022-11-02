@@ -1,4 +1,5 @@
 use cgmath::*;
+use crate::texture::Texture;
 
 pub struct ModelRoot {
     pub default_scene_id: usize,
@@ -21,21 +22,27 @@ pub struct Node {
     pub children: Vec<usize>,
 }
 
-#[derive(Debug)]
 pub struct Mesh {
     pub id: usize,
     pub primitives: Vec<Option<MeshPrimitive>>,
 }
 
-#[derive(Debug)]
+pub enum MeshPrimitiveBuffer {
+
+}
+
 pub struct MeshPrimitive {
     pub id: usize,
     pub position_buffer: wgpu::Buffer,
     pub index_buffer: wgpu::Buffer,
     pub material_id: Option<usize>,
+    // vertex_position_buffer: wgpu::Buffer,
+    // vertex_tex_coord_buffer: wgpu::Buffer,
+    // index_buffer: wgpu::Buffer,
+    // num_indices: u32,
 }
 
-#[derive(Debug)]
 pub struct Material {
     pub id: usize,
+    pub texture: Option<Texture>
 }
