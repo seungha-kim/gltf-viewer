@@ -1,5 +1,7 @@
-use crate::model;
+use cgmath::{Matrix, SquareMatrix};
+use crate::{model, NodeUniform};
 use wgpu::util::DeviceExt;
+use crate::model::MeshPrimitiveVertexBuffer;
 
 pub struct GltfRoot {
     pub document: gltf::Document,
@@ -7,7 +9,12 @@ pub struct GltfRoot {
     pub images: Vec<gltf::image::Data>,
 }
 
-pub fn import_gltf(root: &GltfRoot, device: &wgpu::Device) -> model::ModelRoot {
+pub struct WgpuDeps<'a> {
+    pub device: &'a wgpu::Device,
+    pub node_uniform_layout: &'a wgpu::BindGroupLayout,
+}
+
+pub fn import_gltf(root: &GltfRoot, deps: &WgpuDeps) -> model::ImportedGltf {
     let document = &root.document;
 
     let default_scene_id = document
@@ -22,37 +29,59 @@ pub fn import_gltf(root: &GltfRoot, device: &wgpu::Device) -> model::ModelRoot {
 
     let nodes = document
         .nodes()
-        .map(import_node)
+        .map(|n| import_node(n, deps))
         .collect();
 
     let meshes = document
         .meshes()
-        .map(|mesh| import_mesh(mesh, root, device))
+        .map(|mesh| import_mesh(mesh, root, deps))
         .collect();
 
-    model::ModelRoot {
+    model::ImportedGltf {
         default_scene_id,
         scenes,
         nodes,
         meshes,
-        materials: Vec::new(),
     }
 }
 
 fn import_scene(scene: gltf::Scene) -> model::Scene {
-    let id = scene.index();
+    let gltf_index = scene.index();
     let mut nodes = Vec::new();
     for root_node in scene.nodes() {
         nodes.push(root_node.index());
     }
-    model::Scene { id, nodes }
+    model::Scene { gltf_index, nodes }
 }
 
-fn import_node(node: gltf::Node) -> model::Node {
+fn import_node(node: gltf::Node, deps: &WgpuDeps) -> model::Node {
+    let transform = import_transform(node.transform());
+
+    let uniform_buffer = deps.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Uniform Buffer"),
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        size: std::mem::size_of::<NodeUniform>() as wgpu::BufferAddress,
+        mapped_at_creation: false,
+    });
+
+    let uniform_bind_group = deps.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        layout: &deps.node_uniform_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform_buffer.as_entire_binding(),
+            }
+        ],
+        label: Some("primitive_transform_bind_group"),
+    });
+
     model::Node {
-        id: node.index(),
-        transform: import_transform(node.transform()),
+        gltf_index: node.index(),
+        transform,
         children: node.children().map(|child| child.index()).collect(),
+        mesh_index: node.mesh().map(|m| m.index()),
+        uniform_buffer,
+        uniform_bind_group,
     }
 }
 
@@ -73,12 +102,12 @@ fn import_transform(transform: gltf::scene::Transform) -> cgmath::Matrix4<f32> {
     }
 }
 
-fn import_mesh(mesh: gltf::Mesh, root: &GltfRoot, device: &wgpu::Device) -> model::Mesh {
+fn import_mesh(mesh: gltf::Mesh, root: &GltfRoot, deps: &WgpuDeps) -> model::Mesh {
     model::Mesh {
-        id: mesh.index(),
+        gltf_index: mesh.index(),
         primitives: mesh
             .primitives()
-            .map(|p| import_primitive(p, root, device))
+            .map(|p| import_primitive(p, root, deps))
             .collect(),
     }
 }
@@ -86,7 +115,7 @@ fn import_mesh(mesh: gltf::Mesh, root: &GltfRoot, device: &wgpu::Device) -> mode
 fn import_primitive(
     primitive: gltf::Primitive,
     root: &GltfRoot,
-    device: &wgpu::Device,
+    deps: &WgpuDeps,
 ) -> Option<model::MeshPrimitive> {
     use gltf::mesh::*;
 
@@ -120,6 +149,50 @@ fn import_primitive(
         return None;
     }
 
+    let normal_acc = if let Some(normal_acc) = primitive.get(&Semantic::Normals) {
+        normal_acc
+    } else {
+        eprintln!("Primitive {} has no normal buffer. Skip", index);
+        return None;
+    };
+
+    let normal_view = if let Some(normal_view) = normal_acc.view() {
+        normal_view
+    } else {
+        eprintln!("Primitive {} has sparse normal view. Skip", index);
+        return None;
+    };
+
+    if normal_view.stride().is_some() {
+        eprintln!(
+            "Primitive {} has normal buffer not tightly-packed. Skip",
+            index
+        );
+        return None;
+    }
+
+    let tex_coord_acc = if let Some(tex_coord_acc) = primitive.get(&Semantic::TexCoords(0)) {
+        tex_coord_acc
+    } else {
+        eprintln!("Primitive {} has no 0th texture coordinate. Skip", index);
+        return None;
+    };
+
+    let tex_coord_view = if let Some(tex_coord_view) = tex_coord_acc.view() {
+        tex_coord_view
+    } else {
+        eprintln!("Primitive {} has sparse texture coordinate view. Skip", index);
+        return None;
+    };
+
+    if tex_coord_view.stride().is_some() {
+        eprintln!(
+            "Primitive {} has texture coordinate buffer not tightly-packed. Skip",
+            index
+        );
+        return None;
+    }
+
     let index_acc = if let Some(index_acc) = primitive.indices() {
         index_acc
     } else {
@@ -142,11 +215,18 @@ fn import_primitive(
         return None;
     }
 
+    let device = deps.device;
+
     Some(model::MeshPrimitive {
-        id: index,
+        gltf_index: index,
         material_id: primitive.material().index(),
-        position_buffer: import_buffer(position_view, root, device, "Vertex Position", wgpu::BufferUsages::VERTEX),
-        index_buffer: import_buffer(index_view, root, device, "Vertex Index", wgpu::BufferUsages::INDEX),
+        vertex_buffer: MeshPrimitiveVertexBuffer::SeparatedIndexed {
+            position: import_buffer(position_view, root, device, "Vertex Position", wgpu::BufferUsages::VERTEX),
+            normal: import_buffer(normal_view, root, device, "Vertex Normal", wgpu::BufferUsages::VERTEX),
+            tex_coord_buffer: import_buffer(tex_coord_view, root, device, "Vertex Tex Coord", wgpu::BufferUsages::VERTEX),
+            index_buffer: import_buffer(index_view, root, device, "Vertex Index", wgpu::BufferUsages::INDEX),
+            num_indices: index_acc.count(),
+        },
     })
 }
 

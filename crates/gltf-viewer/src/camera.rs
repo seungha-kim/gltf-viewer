@@ -38,14 +38,18 @@ impl Camera {
         }
     }
 
+    pub fn front(&self) -> Vector3<f32> {
+        Vector3::new(
+            self.yaw.0.cos(),
+            self.pitch.0.sin(),
+            self.yaw.0.sin(),
+        ).normalize()
+    }
+
     pub fn calc_matrix(&self) -> Matrix4<f32> {
         Matrix4::look_to_rh(
             self.position,
-            Vector3::new(
-                self.yaw.0.cos(),
-                self.pitch.0.sin(),
-                self.yaw.0.sin(),
-            ).normalize(),
+            self.front(),
             Vector3::unit_y(),
         )
     }

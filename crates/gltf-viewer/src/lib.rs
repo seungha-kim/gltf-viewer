@@ -10,7 +10,7 @@ use winit::event_loop::ControlFlow;
 use winit::window::Window;
 use winit::{event::*, event_loop::EventLoop, window::WindowBuilder};
 use cgmath::*;
-use crate::import::{GltfRoot, import_gltf};
+use crate::image_util::white_image;
 
 // Renderer 는 Window 나 UI 에 대해서는 몰라야 한다
 // 비즈니스 로직에 대해서도 몰라야 한다. 오직 렌더링에 대해서만
@@ -44,11 +44,7 @@ struct Renderer {
     // pipeline resource
     render_pipeline: wgpu::RenderPipeline,
 
-    // primitives
-    primitives: Vec<RenderPrimitive>,
-
-    // materials
-    materials: Vec<RenderMaterial>,
+    model_root: model::ImportedGltf,
 
     // layout
     texture_bind_group_layout: wgpu::BindGroupLayout,
@@ -71,27 +67,26 @@ struct Renderer {
     white_material: RenderMaterial,
 }
 
-struct RenderPrimitive {
-    // primitive resource
-    vertex_position_buffer: wgpu::Buffer,
-    vertex_tex_coord_buffer: wgpu::Buffer,
-    index_buffer: wgpu::Buffer,
-    num_indices: u32,
-    material_id: Option<usize>,
-    primitive_buffer: wgpu::Buffer,
-    primitive_bind_group: wgpu::BindGroup,
-}
-
 struct RenderMaterial {
     // texture
     diffuse_bind_group: wgpu::BindGroup,
     diffuse_texture: texture::Texture,
 }
 
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct NodeUniform {
+    model_mat: [[f32; 4]; 4],
+    normal_mat: [[f32; 4]; 4],
+}
+
+
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct CameraUniform {
     view_position: [f32; 4],
+    view_front: [f32; 4],
     view_proj: [[f32; 4]; 4],
 }
 
@@ -100,12 +95,15 @@ impl CameraUniform {
         use cgmath::SquareMatrix;
         Self {
             view_position: cgmath::Vector4::zero().into(),
+            view_front: cgmath::Vector4::unit_x().into(),
             view_proj: cgmath::Matrix4::identity().into(),
         }
     }
 
     fn update_view_proj(&mut self, camera: &camera::Camera, projection: &camera::Projection) {
         self.view_position = camera.position.to_homogeneous().into();
+        let f = camera.front();
+        self.view_front = Vector4::new(f.x, f.y, f.z, 0.0).into();
         self.view_proj = (projection.calc_matrix() * camera.calc_matrix()).into();
     }
 }
@@ -132,6 +130,26 @@ impl VertexPosition {
     }
 }
 
+struct VertexNormal([f32; 3]);
+
+impl VertexNormal {
+    fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
+        use std::mem;
+
+        wgpu::VertexBufferLayout {
+            array_stride: mem::size_of::<Self>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &[
+                wgpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 1,
+                    format: wgpu::VertexFormat::Float32x3,
+                },
+            ],
+        }
+    }
+}
+
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 struct VertexTexCoord([f32; 2]);
@@ -146,7 +164,7 @@ impl VertexTexCoord {
             attributes: &[
                 wgpu::VertexAttribute {
                     offset: 0,
-                    shader_location: 1,
+                    shader_location: 2,
                     format: wgpu::VertexFormat::Float32x2,
                 },
             ]
@@ -180,88 +198,13 @@ const INDICES: &[u16] = &[
 ];
 
 impl Renderer {
-    fn sample_primitive(device: &wgpu::Device, material_id: Option<usize>, transform: Matrix4<f32>, layout: &wgpu::BindGroupLayout) -> RenderPrimitive {
-        let vertex_position_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Vertex Position Buffer"),
-            contents: bytemuck::cast_slice(VERTEX_POSITIONS),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-
-        let vertex_tex_coord_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Vertex Position Buffer"),
-            contents: bytemuck::cast_slice(VERTEX_TEX_COORDS),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-
-        let index_buffer = device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("Index Buffer"),
-                contents: bytemuck::cast_slice(INDICES),
-                usage: wgpu::BufferUsages::INDEX,
-            }
-        );
-
-        let num_indices = INDICES.len() as u32;
-
-        let transform_uniform: [[f32; 4]; 4] = transform.into();
-        let primitive_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Transform Buffer"),
-            contents: bytemuck::cast_slice(&[transform_uniform]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-
-        let primitive_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: primitive_buffer.as_entire_binding(),
-                }
-            ],
-            label: Some("primitive_transform_bind_group"),
-        });
-
-
-        RenderPrimitive {
-            vertex_position_buffer,
-            vertex_tex_coord_buffer,
-            index_buffer,
-            num_indices,
-            material_id,
-            primitive_buffer,
-            primitive_bind_group,
-        }
-    }
-
-    fn sample_material(device: &wgpu::Device, queue: &wgpu::Queue, texture_bind_group_layout: &wgpu::BindGroupLayout) -> RenderMaterial {
-        let diffuse_bytes = include_bytes!("happy-tree.png");
-        let diffuse_texture = texture::Texture::from_bytes(&device, &queue, diffuse_bytes, "happy-tree.png").unwrap();
-
-        let diffuse_bind_group = device.create_bind_group(
-            &wgpu::BindGroupDescriptor {
-                layout: texture_bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&diffuse_texture.view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&diffuse_texture.sampler),
-                    }
-                ],
-                label: Some("diffuse_bind_group"),
-            }
-        );
-
-        RenderMaterial {
-            diffuse_texture,
-            diffuse_bind_group,
-        }
-    }
-
+    // 이거 짜다 보니...
+    // gltf 맥락과 상관없는 render material 같은게 있어야 하고,
+    // gltf import 는 그 맥락에서 이루어져야 하겠음
+    //
+    // bind group 문제는
+    // 자원(텍스처 등)이 여러 군데에서 사용될 수 있다, 는 점에서 bind group 이 자원에 엮여있으면 안됨
     fn white_material(device: &wgpu::Device, queue: &wgpu::Queue, texture_bind_group_layout: &wgpu::BindGroupLayout) -> RenderMaterial {
-
         let white_image = image_util::white_image();
         let white_texture = texture::Texture::from_image(&device, &queue, &white_image, Some("White")).unwrap();
 
@@ -352,7 +295,7 @@ impl Renderer {
                 label: Some("texture_bind_group_layout"),
             });
 
-        let primitive_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let uniform_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
@@ -365,17 +308,25 @@ impl Renderer {
                     count: None,
                 }
             ],
-            label: Some("primitive_transform_bind_group_layout"),
+            label: Some("uniform_bind_group_layout"),
         });
 
-        let materials = vec![Self::sample_material(&device, &queue, &texture_bind_group_layout)];
-        let primitives = vec![
-            Self::sample_primitive(&device, None, Matrix4::identity(), &primitive_bind_group_layout),
-            Self::sample_primitive(&device, Some(0), Matrix4::from_translation(Vector3::new(1.0, 0.0, 0.0)), &primitive_bind_group_layout),
-            Self::sample_primitive(&device, Some(0), Matrix4::from_translation(Vector3::new(2.0, 0.0, 0.0)), &primitive_bind_group_layout),
-            Self::sample_primitive(&device, Some(0), Matrix4::from_translation(Vector3::new(0.0, 1.0, 0.0)), &primitive_bind_group_layout),
-            Self::sample_primitive(&device, Some(0), Matrix4::from_translation(Vector3::new(0.0, 2.0, 0.0)), &primitive_bind_group_layout),
-        ];
+
+        // TODO: main 으로 빼기
+        let gltf_root = {
+            let args = std::env::args().collect::<Vec<_>>();
+            let (document, buffers, images) = gltf::import(&args[1]).unwrap();
+            import::GltfRoot {
+                document,
+                buffers,
+                images,
+            }
+        };
+
+        let model_root = import::import_gltf(&gltf_root, &import::WgpuDeps {
+            device: &device,
+            node_uniform_layout: &uniform_bind_group_layout,
+        });
 
         let camera = camera::Camera::new((0.0, 5.0, 10.0), cgmath::Deg(-90.0), cgmath::Deg(-20.0));
         let projection = camera::Projection::new(config.width, config.height, cgmath::Deg(45.0), 0.1, 100.0);
@@ -396,7 +347,7 @@ impl Renderer {
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -427,7 +378,7 @@ impl Renderer {
                 bind_group_layouts: &[
                     &texture_bind_group_layout,
                     &camera_bind_group_layout,
-                    &primitive_bind_group_layout,
+                    &uniform_bind_group_layout,
                 ],
                 push_constant_ranges: &[],
             });
@@ -440,6 +391,7 @@ impl Renderer {
                 entry_point: "vs_main",
                 buffers: &[
                     VertexPosition::desc(),
+                    VertexNormal::desc(),
                     VertexTexCoord::desc(),
                 ],
             },
@@ -482,8 +434,7 @@ impl Renderer {
             config,
             size,
             render_pipeline,
-            primitives,
-            materials,
+            model_root,
             camera,
             projection,
             camera_controller,
@@ -571,19 +522,53 @@ impl Renderer {
             });
             render_pass.set_pipeline(&self.render_pipeline);
             render_pass.set_bind_group(1, &self.camera_bind_group, &[]);
-            for (i, primitive) in self.primitives.iter().enumerate() {
-                let material = if let Some(material_id) = primitive.material_id {
-                    &self.materials[material_id]
-                } else {
-                    &self.white_material
-                };
 
-                render_pass.set_bind_group(2, &primitive.primitive_bind_group, &[]);
-                render_pass.set_bind_group(0, &material.diffuse_bind_group, &[]);
-                render_pass.set_vertex_buffer(0, primitive.vertex_position_buffer.slice(..));
-                render_pass.set_vertex_buffer(1, primitive.vertex_tex_coord_buffer.slice(..));
-                render_pass.set_index_buffer(primitive.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-                render_pass.draw_indexed(0..primitive.num_indices, 0, 0..1);
+            let mut node_stack: Vec<(&model::Node, Matrix4<f32>)> = Vec::new();
+
+            let scene = &self.model_root.scenes[self.model_root.default_scene_id];
+            for root_node_index in &scene.nodes {
+                node_stack.push((&self.model_root.nodes[*root_node_index], Matrix4::identity()));
+            }
+
+            while let Some((node, upper_transform)) = node_stack.pop() {
+                // TODO: 매번 write_buffer 할 필요 없음
+                // TODO: cgmath::Matrix4 가 bytemuck 이랑 연동되면 좋을텐데 -> nalgebra?
+                let transform = upper_transform * node.transform;
+                let rs = Matrix3::from_cols(transform.x.truncate(), transform.y.truncate(), transform.z.truncate());
+                let node_uniform = NodeUniform {
+                    model_mat: transform.into(),
+                    normal_mat: Matrix4::from(rs.invert().unwrap().transpose()).into(),
+                };
+                self.queue.write_buffer(&node.uniform_buffer, 0, bytemuck::cast_slice(&[node_uniform]));
+
+                // draw mesh
+                if let Some(mesh_index) = node.mesh_index {
+                    let mesh = &self.model_root.meshes[mesh_index];
+                    for (i, primitive) in mesh.primitives.iter().enumerate() {
+                        if primitive.is_none() { continue; }
+                        let primitive = primitive.as_ref().unwrap();
+
+                        let material = &self.white_material;
+
+                        let model::MeshPrimitiveVertexBuffer::SeparatedIndexed {
+                            position: position_buffer, normal: normal_buffer, tex_coord_buffer, index_buffer, num_indices
+                        } = &primitive.vertex_buffer;
+
+                        render_pass.set_bind_group(2, &node.uniform_bind_group, &[]);
+                        render_pass.set_bind_group(0, &material.diffuse_bind_group, &[]);
+                        render_pass.set_vertex_buffer(0, position_buffer.slice(..));
+                        render_pass.set_vertex_buffer(1, normal_buffer.slice(..));
+                        render_pass.set_vertex_buffer(2, tex_coord_buffer.slice(..));
+                        render_pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+                        render_pass.draw_indexed(0..(*num_indices as u32), 0, 0..1);
+                    }
+                }
+
+                // visit children
+                for child_index in &node.children {
+                    let child = &self.model_root.nodes[*child_index];
+                    node_stack.push((child, transform))
+                }
             }
         }
         let command_buffer = encoder.finish();
