@@ -29,6 +29,7 @@ pub struct ImportedGltf {
     pub scenes: Vec<Scene>,
     pub nodes: Vec<Node>,
     pub meshes: Vec<Mesh>,
+    pub materials: Vec<Material>,
 }
 
 #[derive(Debug)]
@@ -46,6 +47,13 @@ pub struct Node {
 
     pub uniform_buffer: wgpu::Buffer,
     pub uniform_bind_group: wgpu::BindGroup,
+}
+
+pub struct Material {
+    pub gltf_index: usize,
+    pub base_color_factor: Vector4<f32>,
+    pub material_bind_group: wgpu::BindGroup,
+    // TODO: enum
 }
 
 pub struct Mesh {

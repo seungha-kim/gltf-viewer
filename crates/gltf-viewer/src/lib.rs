@@ -10,7 +10,6 @@ use winit::event_loop::ControlFlow;
 use winit::window::Window;
 use winit::{event::*, event_loop::EventLoop, window::WindowBuilder};
 use cgmath::*;
-use crate::image_util::white_image;
 
 // Renderer 는 Window 나 UI 에 대해서는 몰라야 한다
 // 비즈니스 로직에 대해서도 몰라야 한다. 오직 렌더링에 대해서만
@@ -48,8 +47,9 @@ struct Renderer {
     model_root: model::ImportedGltf,
 
     // layout
-    texture_bind_group_layout: wgpu::BindGroupLayout,
     camera_bind_group_layout: wgpu::BindGroupLayout,
+    node_bind_group_layout: wgpu::BindGroupLayout,
+    material_bind_group_layout: wgpu::BindGroupLayout,
 
     // camera state
     camera: camera::Camera,
@@ -65,13 +65,7 @@ struct Renderer {
     mouse_pressed: bool,
 
     // etc
-    white_material: RenderMaterial,
-}
-
-struct RenderMaterial {
-    // texture
-    diffuse_bind_group: wgpu::BindGroup,
-    diffuse_texture: texture::Texture,
+    white_texture: texture::Texture,
 }
 
 
@@ -80,6 +74,13 @@ struct RenderMaterial {
 struct NodeUniform {
     model_mat: [[f32; 4]; 4],
     normal_mat: [[f32; 4]; 4],
+}
+
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct MaterialUniform {
+    base_color_factor: [f32; 4],
 }
 
 
@@ -199,39 +200,6 @@ const INDICES: &[u16] = &[
 ];
 
 impl Renderer {
-    // 이거 짜다 보니...
-    // gltf 맥락과 상관없는 render material 같은게 있어야 하고,
-    // gltf import 는 그 맥락에서 이루어져야 하겠음
-    //
-    // bind group 문제는
-    // 자원(텍스처 등)이 여러 군데에서 사용될 수 있다, 는 점에서 bind group 이 자원에 엮여있으면 안됨
-    fn white_material(device: &wgpu::Device, queue: &wgpu::Queue, texture_bind_group_layout: &wgpu::BindGroupLayout) -> RenderMaterial {
-        let white_image = image_util::white_image();
-        let white_texture = texture::Texture::from_image(&device, &queue, &white_image, Some("White")).unwrap();
-
-        let diffuse_bind_group = device.create_bind_group(
-            &wgpu::BindGroupDescriptor {
-                layout: texture_bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&white_texture.view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&white_texture.sampler),
-                    }
-                ],
-                label: Some("diffuse_bind_group"),
-            }
-        );
-
-        RenderMaterial {
-            diffuse_texture: white_texture,
-            diffuse_bind_group,
-        }
-    }
-
     async fn new(window: &Window) -> Self {
         let size = window.inner_size();
 
@@ -273,30 +241,7 @@ impl Renderer {
         };
         surface.configure(&device, &config);
 
-        let texture_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            multisampled: false,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-                label: Some("texture_bind_group_layout"),
-            });
-
-        let uniform_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let node_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
@@ -309,9 +254,40 @@ impl Renderer {
                     count: None,
                 }
             ],
-            label: Some("uniform_bind_group_layout"),
+            label: Some("node_bind_group_layout"),
         });
 
+        let material_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+            label: Some("material_bind_group_layout"),
+        });
 
         // TODO: main 으로 빼기
         let gltf_root = {
@@ -324,9 +300,15 @@ impl Renderer {
             }
         };
 
+        let white_image = image_util::white_image();
+        let white_texture = texture::Texture::from_image(&device, &queue, &white_image, Some("White")).unwrap();
+
         let model_root = import::import_gltf(&gltf_root, &import::WgpuDeps {
             device: &device,
-            node_uniform_layout: &uniform_bind_group_layout,
+            queue: &queue,
+            node_uniform_layout: &node_bind_group_layout,
+            material_uniform_layout: &material_bind_group_layout,
+            white_texture: &white_texture,
         });
 
         let camera = camera::Camera::new((0.0, 5.0, 10.0), cgmath::Deg(-90.0), cgmath::Deg(-20.0));
@@ -379,9 +361,9 @@ impl Renderer {
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
                 bind_group_layouts: &[
-                    &texture_bind_group_layout,
+                    &material_bind_group_layout,
                     &camera_bind_group_layout,
-                    &uniform_bind_group_layout,
+                    &node_bind_group_layout,
                 ],
                 push_constant_ranges: &[],
             });
@@ -434,8 +416,6 @@ impl Renderer {
             multiview: None,
         });
 
-        let white_material = Self::white_material(&device, &queue, &texture_bind_group_layout);
-
         Self {
             surface,
             device,
@@ -451,10 +431,11 @@ impl Renderer {
             camera_buffer,
             camera_bind_group,
             mouse_pressed: false,
-            texture_bind_group_layout,
             camera_bind_group_layout,
-            white_material,
+            node_bind_group_layout,
+            material_bind_group_layout,
             depth_texture,
+            white_texture,
         }
     }
 
@@ -566,14 +547,15 @@ impl Renderer {
                         if primitive.is_none() { continue; }
                         let primitive = primitive.as_ref().unwrap();
 
-                        let material = &self.white_material;
+                        // TODO: default material
+                        let material = &self.model_root.materials[primitive.material_id.unwrap()];
 
                         let model::MeshPrimitiveVertexBuffer::SeparatedIndexed {
                             position: position_buffer, normal: normal_buffer, tex_coord_buffer, index_buffer, num_indices
                         } = &primitive.vertex_buffer;
 
                         render_pass.set_bind_group(2, &node.uniform_bind_group, &[]);
-                        render_pass.set_bind_group(0, &material.diffuse_bind_group, &[]);
+                        render_pass.set_bind_group(0, &material.material_bind_group, &[]);
                         render_pass.set_vertex_buffer(0, position_buffer.slice(..));
                         render_pass.set_vertex_buffer(1, normal_buffer.slice(..));
                         render_pass.set_vertex_buffer(2, tex_coord_buffer.slice(..));

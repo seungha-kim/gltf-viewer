@@ -1,7 +1,8 @@
 use cgmath::{Matrix, SquareMatrix};
-use crate::{model, NodeUniform};
+use crate::{MaterialUniform, model, NodeUniform};
 use wgpu::util::DeviceExt;
 use crate::model::MeshPrimitiveVertexBuffer;
+use crate::texture;
 
 pub struct GltfRoot {
     pub document: gltf::Document,
@@ -11,7 +12,10 @@ pub struct GltfRoot {
 
 pub struct WgpuDeps<'a> {
     pub device: &'a wgpu::Device,
+    pub queue: &'a wgpu::Queue,
     pub node_uniform_layout: &'a wgpu::BindGroupLayout,
+    pub material_uniform_layout: &'a wgpu::BindGroupLayout,
+    pub white_texture: &'a texture::Texture,
 }
 
 pub fn import_gltf(root: &GltfRoot, deps: &WgpuDeps) -> model::ImportedGltf {
@@ -37,11 +41,16 @@ pub fn import_gltf(root: &GltfRoot, deps: &WgpuDeps) -> model::ImportedGltf {
         .map(|mesh| import_mesh(mesh, root, deps))
         .collect();
 
+    // TODO: texture, sampler
+
+    let materials = document.materials().map(|m| import_material(m, deps)).collect();
+
     model::ImportedGltf {
         default_scene_id,
         scenes,
         nodes,
         meshes,
+        materials,
     }
 }
 
@@ -99,6 +108,50 @@ fn import_transform(transform: gltf::scene::Transform) -> cgmath::Matrix4<f32> {
             let scale_mat = cgmath::Matrix4::from_nonuniform_scale(scale[0], scale[1], scale[2]);
             translation_mat * rotation_mat * scale_mat
         }
+    }
+}
+
+fn import_material(material: gltf::Material, deps: &WgpuDeps) -> model::Material {
+    let mr = material.pbr_metallic_roughness();
+    let base_color_factor: cgmath::Vector4<f32> = mr.base_color_factor().into();
+    let material_uniform = MaterialUniform {
+        base_color_factor: base_color_factor.into()
+    };
+
+    let uniform_buffer = deps.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Material Uniform Buffer"),
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        size: std::mem::size_of::<MaterialUniform>() as wgpu::BufferAddress,
+        mapped_at_creation: false,
+    });
+
+    let material_bind_group = deps.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        layout: &deps.material_uniform_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                // TODO: imported texture
+                resource: wgpu::BindingResource::TextureView(&deps.white_texture.view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                // TODO: imported sampler
+                resource: wgpu::BindingResource::Sampler(&deps.white_texture.sampler),
+            }
+        ],
+        label: Some("material_bind_group"),
+    });
+
+    deps.queue.write_buffer(&uniform_buffer, 0, bytemuck::cast_slice(&[material_uniform]));
+
+    model::Material {
+        gltf_index: material.index().unwrap(),
+        base_color_factor,
+        material_bind_group,
     }
 }
 
