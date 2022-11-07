@@ -13,6 +13,7 @@ struct Node {
 
 struct Material {
     base_color_factor: vec4<f32>,
+    emissive_factor: vec3<f32>,
 }
 
 @group(1) @binding(0)
@@ -57,9 +58,9 @@ var s_diffuse: sampler;
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let brightness = 0.5 + 0.5 * dot(in.ws_normal.xyz, -camera.view_front.xyz);
+    let brightness = 0.3 + 0.7 * dot(in.ws_normal.xyz, -camera.view_front.xyz);
     let sampled = textureSample(t_diffuse, s_diffuse, in.tex_coords);
-    let color = brightness * sampled.rgb * material.base_color_factor.rgb;
+    let color = material.emissive_factor + brightness * sampled.rgb * material.base_color_factor.rgb;
     let alpha = sampled.a * material.base_color_factor.a;
     return vec4<f32>(color, alpha);
 }

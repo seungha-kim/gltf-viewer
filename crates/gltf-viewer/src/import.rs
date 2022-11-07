@@ -112,10 +112,13 @@ fn import_transform(transform: gltf::scene::Transform) -> cgmath::Matrix4<f32> {
 }
 
 fn import_material(material: gltf::Material, deps: &WgpuDeps) -> model::Material {
+    let emissive_factor: cgmath::Vector3<f32> = material.emissive_factor().into();
     let mr = material.pbr_metallic_roughness();
     let base_color_factor: cgmath::Vector4<f32> = mr.base_color_factor().into();
     let material_uniform = MaterialUniform {
-        base_color_factor: base_color_factor.into()
+        base_color_factor: base_color_factor.into(),
+        emissive_factor: emissive_factor.into(),
+        _pad: 0.0,
     };
 
     let uniform_buffer = deps.device.create_buffer(&wgpu::BufferDescriptor {
@@ -151,7 +154,9 @@ fn import_material(material: gltf::Material, deps: &WgpuDeps) -> model::Material
     model::Material {
         gltf_index: material.index().unwrap(),
         base_color_factor,
+        emissive_factor,
         material_bind_group,
+        uniform_buffer,
     }
 }
 

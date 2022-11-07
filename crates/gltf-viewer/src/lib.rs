@@ -81,6 +81,8 @@ struct NodeUniform {
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct MaterialUniform {
     base_color_factor: [f32; 4],
+    emissive_factor: [f32; 3],
+    _pad: f32,
 }
 
 

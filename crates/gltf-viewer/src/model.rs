@@ -52,6 +52,9 @@ pub struct Node {
 pub struct Material {
     pub gltf_index: usize,
     pub base_color_factor: Vector4<f32>,
+    pub emissive_factor: Vector3<f32>,
+
+    pub uniform_buffer: wgpu::Buffer,
     pub material_bind_group: wgpu::BindGroup,
     // TODO: enum
 }
