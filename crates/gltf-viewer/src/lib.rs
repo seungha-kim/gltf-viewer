@@ -548,7 +548,8 @@ impl Renderer {
                         let primitive = primitive.as_ref().unwrap();
 
                         // TODO: default material
-                        let material = &self.model_root.materials[primitive.material_id.unwrap()];
+                        let material_id = if let Some(id) = primitive.material_id { id } else { continue; };
+                        let material = &self.model_root.materials[material_id];
 
                         let model::MeshPrimitiveVertexBuffer::SeparatedIndexed {
                             position: position_buffer, normal: normal_buffer, tex_coord_buffer, index_buffer, num_indices
