@@ -47,8 +47,11 @@ struct Renderer {
     model_root: model::ImportedGltf,
 
     // layout
+    #[allow(dead_code)]
     camera_bind_group_layout: wgpu::BindGroupLayout,
+    #[allow(dead_code)]
     node_bind_group_layout: wgpu::BindGroupLayout,
+    #[allow(dead_code)]
     material_bind_group_layout: wgpu::BindGroupLayout,
 
     // camera state
@@ -65,6 +68,7 @@ struct Renderer {
     mouse_pressed: bool,
 
     // etc
+    #[allow(dead_code)]
     white_texture: texture::Texture,
 }
 
@@ -96,7 +100,6 @@ struct CameraUniform {
 
 impl CameraUniform {
     fn new() -> Self {
-        use cgmath::SquareMatrix;
         Self {
             view_position: cgmath::Vector4::zero().into(),
             view_front: cgmath::Vector4::unit_x().into(),
@@ -175,31 +178,6 @@ impl VertexTexCoord {
         }
     }
 }
-
-#[rustfmt::skip]
-const VERTEX_POSITIONS: &[VertexPosition] = &[
-    VertexPosition([-0.0868241, 0.49240386, 0.0]),
-    VertexPosition([-0.49513406, 0.06958647, 0.0]),
-    VertexPosition([-0.21918549, -0.44939706, 0.0]),
-    VertexPosition([0.35966998, -0.3473291, 0.0]),
-    VertexPosition([0.44147372, 0.2347359, 0.0]),
-];
-
-#[rustfmt::skip]
-const VERTEX_TEX_COORDS: &[VertexTexCoord] = &[
-    VertexTexCoord([0.4131759, 0.00759614]),
-    VertexTexCoord([0.0048659444, 0.43041354]),
-    VertexTexCoord([0.28081453, 0.949397]),
-    VertexTexCoord([0.85967, 0.84732914]),
-    VertexTexCoord([0.9414737, 0.2652641]),
-];
-
-#[rustfmt::skip]
-const INDICES: &[u16] = &[
-    0, 1, 4,
-    1, 2, 4,
-    2, 3, 4,
-];
 
 impl Renderer {
     async fn new(window: &Window) -> Self {
@@ -545,7 +523,7 @@ impl Renderer {
                 // draw mesh
                 if let Some(mesh_index) = node.mesh_index {
                     let mesh = &self.model_root.meshes[mesh_index];
-                    for (i, primitive) in mesh.primitives.iter().enumerate() {
+                    for primitive in mesh.primitives.iter() {
                         if primitive.is_none() { continue; }
                         let primitive = primitive.as_ref().unwrap();
 

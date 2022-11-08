@@ -1,5 +1,4 @@
 use cgmath::*;
-use crate::texture;
 
 /*
 런타임에 바뀔 수 있는 것과 바뀔 수 없는 것 구분
