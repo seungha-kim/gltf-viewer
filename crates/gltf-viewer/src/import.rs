@@ -185,16 +185,12 @@ fn import_primitive(
         return None;
     }
 
-    let position_acc = if let Some(position_acc) = primitive.get(&Semantic::Positions) {
-        position_acc
-    } else {
+    let Some(position_acc) = primitive.get(&Semantic::Positions) else {
         eprintln!("Primitive {} has no positions. Skip", index);
         return None;
     };
 
-    let position_view = if let Some(position_view) = position_acc.view() {
-        position_view
-    } else {
+    let Some(position_view) = position_acc.view() else {
         eprintln!("Primitive {} has sparse position view. Skip", index);
         return None;
     };
@@ -207,16 +203,12 @@ fn import_primitive(
         return None;
     }
 
-    let normal_acc = if let Some(normal_acc) = primitive.get(&Semantic::Normals) {
-        normal_acc
-    } else {
+    let Some(normal_acc) = primitive.get(&Semantic::Normals) else {
         eprintln!("Primitive {} has no normal buffer. Skip", index);
         return None;
     };
 
-    let normal_view = if let Some(normal_view) = normal_acc.view() {
-        normal_view
-    } else {
+    let Some(normal_view) = normal_acc.view() else {
         eprintln!("Primitive {} has sparse normal view. Skip", index);
         return None;
     };
@@ -229,16 +221,12 @@ fn import_primitive(
         return None;
     }
 
-    let tex_coord_acc = if let Some(tex_coord_acc) = primitive.get(&Semantic::TexCoords(0)) {
-        tex_coord_acc
-    } else {
+    let Some(tex_coord_acc) = primitive.get(&Semantic::TexCoords(0)) else {
         eprintln!("Primitive {} has no 0th texture coordinate. Skip", index);
         return None;
     };
 
-    let tex_coord_view = if let Some(tex_coord_view) = tex_coord_acc.view() {
-        tex_coord_view
-    } else {
+    let Some(tex_coord_view) = tex_coord_acc.view() else {
         eprintln!("Primitive {} has sparse texture coordinate view. Skip", index);
         return None;
     };
@@ -251,16 +239,12 @@ fn import_primitive(
         return None;
     }
 
-    let index_acc = if let Some(index_acc) = primitive.indices() {
-        index_acc
-    } else {
+    let Some(index_acc) = primitive.indices() else {
         eprintln!("Primitive {} has no indices. Skip", index);
         return None;
     };
 
-    let index_view = if let Some(index_view) = index_acc.view() {
-        index_view
-    } else {
+    let Some(index_view) = index_acc.view() else {
         eprintln!("Primitive {} has sparse index view. Skip", index);
         return None;
     };
