@@ -63,19 +63,13 @@ pub struct Mesh {
     pub primitives: Vec<Option<MeshPrimitive>>,
 }
 
-pub enum MeshPrimitiveVertexBuffer {
-    SeparatedIndexed {
-        position: wgpu::Buffer,
-        normal: wgpu::Buffer,
-        tex_coord_buffer: wgpu::Buffer,
-        index_buffer: wgpu::Buffer,
-        num_indices: usize,
-        index_format: wgpu::IndexFormat,
-    },
-}
-
 pub struct MeshPrimitive {
     pub gltf_index: usize,
-    pub vertex_buffer: MeshPrimitiveVertexBuffer,
+    pub position_buffer: wgpu::Buffer,
+    pub normal_buffer: wgpu::Buffer,
+    pub tex_coord_buffer: wgpu::Buffer,
+    pub index_buffer: wgpu::Buffer,
+    pub num_indices: usize,
+    pub index_format: wgpu::IndexFormat,
     pub material_id: Option<usize>,
 }

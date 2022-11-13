@@ -1,6 +1,5 @@
 use crate::{MaterialUniform, model, NodeUniform};
 use wgpu::util::DeviceExt;
-use crate::model::MeshPrimitiveVertexBuffer;
 use crate::texture;
 
 pub struct GltfRoot {
@@ -201,35 +200,33 @@ fn import_primitive(
     Some(model::MeshPrimitive {
         gltf_index: index,
         material_id: primitive.material().index(),
-        vertex_buffer: MeshPrimitiveVertexBuffer::SeparatedIndexed {
-            position: import_buffer(
-                &primitive.get(&Semantic::Positions).expect("Failed to get position accessor"),
-                root,
-                deps,
-                Some(12),
-                "Vertex Position",
-                wgpu::BufferUsages::VERTEX,
-            ).0,
-            normal: import_buffer(
-                &primitive.get(&Semantic::Normals).expect("Failed to get normal accessor"),
-                root,
-                deps,
-                Some(12),
-                "Vertex Normal",
-                wgpu::BufferUsages::VERTEX,
-            ).0,
-            tex_coord_buffer: import_buffer(
-                &primitive.get(&Semantic::TexCoords(0)).expect("Failed to get tex coord 0"),
-                root,
-                deps,
-                Some(8),
-                "Vertex Tex Coord",
-                wgpu::BufferUsages::VERTEX,
-            ).0,
-            index_buffer,
-            index_format,
-            num_indices: index_acc.count(),
-        },
+        position_buffer: import_buffer(
+            &primitive.get(&Semantic::Positions).expect("Failed to get position accessor"),
+            root,
+            deps,
+            Some(12),
+            "Vertex Position",
+            wgpu::BufferUsages::VERTEX,
+        ).0,
+        normal_buffer: import_buffer(
+            &primitive.get(&Semantic::Normals).expect("Failed to get normal accessor"),
+            root,
+            deps,
+            Some(12),
+            "Vertex Normal",
+            wgpu::BufferUsages::VERTEX,
+        ).0,
+        tex_coord_buffer: import_buffer(
+            &primitive.get(&Semantic::TexCoords(0)).expect("Failed to get tex coord 0"),
+            root,
+            deps,
+            Some(8),
+            "Vertex Tex Coord",
+            wgpu::BufferUsages::VERTEX,
+        ).0,
+        index_buffer,
+        index_format,
+        num_indices: index_acc.count(),
     })
 }
 
