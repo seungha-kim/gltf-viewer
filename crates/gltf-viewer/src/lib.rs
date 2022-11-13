@@ -568,7 +568,7 @@ impl Renderer {
 }
 
 pub async fn run() {
-    env_logger::init();
+    env_logger::builder().filter_level(log::LevelFilter::Warn).init();
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new().build(&event_loop).unwrap();
 

@@ -110,6 +110,9 @@ fn import_transform(transform: gltf::scene::Transform) -> cgmath::Matrix4<f32> {
 }
 
 fn import_material(material: gltf::Material, deps: &WgpuDeps) -> model::Material {
+    if material.double_sided() {
+        log::warn!("Double sided material found");
+    }
     let emissive_factor: cgmath::Vector3<f32> = material.emissive_factor().into();
     let mr = material.pbr_metallic_roughness();
     let base_color_factor: cgmath::Vector4<f32> = mr.base_color_factor().into();
