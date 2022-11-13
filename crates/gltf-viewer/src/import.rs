@@ -183,110 +183,81 @@ fn import_primitive(
         eprintln!("Primitive {} is not of triangles mode. Skip", index);
         return None;
     }
-
-    let Some(position_acc) = primitive.get(&Semantic::Positions) else {
-        eprintln!("Primitive {} has no positions. Skip", index);
-        return None;
+    let index_acc = primitive.indices().expect("Failed to get index accessor");
+    let (index_buffer, index_size) = import_buffer(
+        &index_acc,
+        root,
+        deps,
+        None,
+        "Vertex Index",
+        wgpu::BufferUsages::INDEX,
+    );
+    let index_format = match index_size {
+        2 => wgpu::IndexFormat::Uint16,
+        4 => wgpu::IndexFormat::Uint32,
+        _ => panic!("Unsupported index format"),
     };
-
-    let Some(position_view) = position_acc.view() else {
-        eprintln!("Primitive {} has sparse position view. Skip", index);
-        return None;
-    };
-
-    if position_view.stride().is_some() {
-        eprintln!(
-            "Primitive {} has position buffer not tightly-packed. Skip",
-            index
-        );
-        return None;
-    }
-
-    let Some(normal_acc) = primitive.get(&Semantic::Normals) else {
-        eprintln!("Primitive {} has no normal buffer. Skip", index);
-        return None;
-    };
-
-    let Some(normal_view) = normal_acc.view() else {
-        eprintln!("Primitive {} has sparse normal view. Skip", index);
-        return None;
-    };
-
-    if normal_view.stride().is_some() {
-        eprintln!(
-            "Primitive {} has normal buffer not tightly-packed. Skip",
-            index
-        );
-        return None;
-    }
-
-    let Some(tex_coord_acc) = primitive.get(&Semantic::TexCoords(0)) else {
-        eprintln!("Primitive {} has no 0th texture coordinate. Skip", index);
-        return None;
-    };
-
-    let Some(tex_coord_view) = tex_coord_acc.view() else {
-        eprintln!("Primitive {} has sparse texture coordinate view. Skip", index);
-        return None;
-    };
-
-    if tex_coord_view.stride().is_some() {
-        eprintln!(
-            "Primitive {} has texture coordinate buffer not tightly-packed. Skip",
-            index
-        );
-        return None;
-    }
-
-    let Some(index_acc) = primitive.indices() else {
-        eprintln!("Primitive {} has no indices. Skip", index);
-        return None;
-    };
-
-    let Some(index_view) = index_acc.view() else {
-        eprintln!("Primitive {} has sparse index view. Skip", index);
-        return None;
-    };
-
-    if index_view.stride().is_some() {
-        eprintln!(
-            "Primitive {} has index buffer not tightly-packed. Skip",
-            index
-        );
-        return None;
-    }
-
-    let device = deps.device;
 
     Some(model::MeshPrimitive {
         gltf_index: index,
         material_id: primitive.material().index(),
         vertex_buffer: MeshPrimitiveVertexBuffer::SeparatedIndexed {
-            position: import_buffer(position_view, root, device, "Vertex Position", wgpu::BufferUsages::VERTEX),
-            normal: import_buffer(normal_view, root, device, "Vertex Normal", wgpu::BufferUsages::VERTEX),
-            tex_coord_buffer: import_buffer(tex_coord_view, root, device, "Vertex Tex Coord", wgpu::BufferUsages::VERTEX),
-            index_buffer: import_buffer(index_view, root, device, "Vertex Index", wgpu::BufferUsages::INDEX),
+            position: import_buffer(
+                &primitive.get(&Semantic::Positions).expect("Failed to get position accessor"),
+                root,
+                deps,
+                Some(12),
+                "Vertex Position",
+                wgpu::BufferUsages::VERTEX,
+            ).0,
+            normal: import_buffer(
+                &primitive.get(&Semantic::Normals).expect("Failed to get normal accessor"),
+                root,
+                deps,
+                Some(12),
+                "Vertex Normal",
+                wgpu::BufferUsages::VERTEX,
+            ).0,
+            tex_coord_buffer: import_buffer(
+                &primitive.get(&Semantic::TexCoords(0)).expect("Failed to get tex coord 0"),
+                root,
+                deps,
+                Some(8),
+                "Vertex Tex Coord",
+                wgpu::BufferUsages::VERTEX,
+            ).0,
+            index_buffer,
+            index_format,
             num_indices: index_acc.count(),
         },
     })
 }
 
 fn import_buffer(
-    view: gltf::buffer::View,
+    acc: &gltf::Accessor,
     root: &GltfRoot,
-    device: &wgpu::Device,
+    deps: &WgpuDeps,
+    assert_stride: Option<usize>,
     label: &str,
     usage: wgpu::BufferUsages,
-) -> wgpu::Buffer {
-    // TODO: non tightly-packed buffers
-    assert!(view.stride().is_none());
-    let offset = view.offset();
-    let length = view.length();
+) -> (wgpu::Buffer, usize) {
+    let view = acc.view().expect("Failed to load buffer view from accessor");
+
+    let stride = view.stride().unwrap_or_else(|| acc.size());
+    if let Some(assert_stride) = assert_stride {
+        if stride != assert_stride {
+            panic!("Buffer is not tightly-packed or has invalid type");
+        }
+    }
+
+    let offset = view.offset() + acc.offset();
+    let length = acc.size() * acc.count();
     let buffer = &root.buffers[view.buffer().index()].0;
     let slice = &buffer[offset..(offset + length)];
-    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+    let wgpu_buffer = deps.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some(label),
         contents: slice,
         usage,
-    })
+    });
+    (wgpu_buffer, stride)
 }

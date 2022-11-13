@@ -70,7 +70,8 @@ pub enum MeshPrimitiveVertexBuffer {
         tex_coord_buffer: wgpu::Buffer,
         index_buffer: wgpu::Buffer,
         num_indices: usize,
-    }
+        index_format: wgpu::IndexFormat,
+    },
 }
 
 pub struct MeshPrimitive {

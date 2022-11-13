@@ -532,7 +532,12 @@ impl Renderer {
                         let material = &self.model_root.materials[material_id];
 
                         let model::MeshPrimitiveVertexBuffer::SeparatedIndexed {
-                            position: position_buffer, normal: normal_buffer, tex_coord_buffer, index_buffer, num_indices
+                            position: position_buffer,
+                            normal: normal_buffer,
+                            tex_coord_buffer,
+                            index_buffer,
+                            index_format,
+                            num_indices,
                         } = &primitive.vertex_buffer;
 
                         render_pass.set_bind_group(2, &node.uniform_bind_group, &[]);
@@ -540,7 +545,7 @@ impl Renderer {
                         render_pass.set_vertex_buffer(0, position_buffer.slice(..));
                         render_pass.set_vertex_buffer(1, normal_buffer.slice(..));
                         render_pass.set_vertex_buffer(2, tex_coord_buffer.slice(..));
-                        render_pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+                        render_pass.set_index_buffer(index_buffer.slice(..), *index_format);
                         render_pass.draw_indexed(0..(*num_indices as u32), 0, 0..1);
                     }
                 }
