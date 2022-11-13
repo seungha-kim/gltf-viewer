@@ -193,40 +193,55 @@ fn import_primitive(
         None,
         "Vertex Index",
         wgpu::BufferUsages::INDEX,
-    );
+    ).expect("Failed to get index buffer");
     let index_format = match index_size {
         2 => wgpu::IndexFormat::Uint16,
         4 => wgpu::IndexFormat::Uint32,
         _ => panic!("Unsupported index format"),
     };
 
+    let position_acc = primitive.get(&Semantic::Positions).expect("Failed to get position accessor");
+    let normal_acc = primitive.get(&Semantic::Normals).expect("Failed to get normal accessor");
+    let tex_coord_acc = primitive.get(&Semantic::TexCoords(0));
+
+    let vertex_count = position_acc.count();
+
+    let position_buffer = import_buffer(
+        &position_acc,
+        root,
+        deps,
+        Some(12),
+        "Vertex Position",
+        wgpu::BufferUsages::VERTEX,
+    ).unwrap().0;
+
+    let normal_buffer = import_buffer(
+        &normal_acc,
+        root,
+        deps,
+        Some(12),
+        "Vertex Normal",
+        wgpu::BufferUsages::VERTEX,
+    ).unwrap().0;
+
+    let tex_coord_buffer = tex_coord_acc.map(|acc| import_buffer(
+        &acc,
+        root,
+        deps,
+        Some(8),
+        "Vertex Tex Coord",
+        wgpu::BufferUsages::VERTEX,
+    ).unwrap().0).unwrap_or_else(|| {
+        log::warn!("Creating null texture coordiates buffer");
+        create_null_texcoord_buffer(deps, vertex_count)
+    });
+
     Some(model::MeshPrimitive {
         gltf_index: index,
         material_id: primitive.material().index(),
-        position_buffer: import_buffer(
-            &primitive.get(&Semantic::Positions).expect("Failed to get position accessor"),
-            root,
-            deps,
-            Some(12),
-            "Vertex Position",
-            wgpu::BufferUsages::VERTEX,
-        ).0,
-        normal_buffer: import_buffer(
-            &primitive.get(&Semantic::Normals).expect("Failed to get normal accessor"),
-            root,
-            deps,
-            Some(12),
-            "Vertex Normal",
-            wgpu::BufferUsages::VERTEX,
-        ).0,
-        tex_coord_buffer: import_buffer(
-            &primitive.get(&Semantic::TexCoords(0)).expect("Failed to get tex coord 0"),
-            root,
-            deps,
-            Some(8),
-            "Vertex Tex Coord",
-            wgpu::BufferUsages::VERTEX,
-        ).0,
+        position_buffer,
+        normal_buffer,
+        tex_coord_buffer,
         index_buffer,
         index_format,
         num_indices: index_acc.count(),
@@ -240,7 +255,7 @@ fn import_buffer(
     assert_stride: Option<usize>,
     label: &str,
     usage: wgpu::BufferUsages,
-) -> (wgpu::Buffer, usize) {
+) -> Option<(wgpu::Buffer, usize)> {
     let view = acc.view().expect("Failed to load buffer view from accessor");
 
     let stride = view.stride().unwrap_or_else(|| acc.size());
@@ -259,5 +274,22 @@ fn import_buffer(
         contents: slice,
         usage,
     });
-    (wgpu_buffer, stride)
+    Some((wgpu_buffer, stride))
+}
+
+// TODO: shader permutation or pipeline overridable constants
+fn create_null_texcoord_buffer(
+    deps: &WgpuDeps,
+    count: usize,
+) -> wgpu::Buffer {
+    let mut data = Vec::new();
+    data.resize(count * 2, 0.0f32);
+    let raw_data = unsafe {
+        std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * 4)
+    };
+    deps.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Null texture coordidates"),
+        contents: raw_data,
+        usage: wgpu::BufferUsages::VERTEX,
+    })
 }
