@@ -11,6 +11,8 @@ use winit::window::Window;
 use winit::{event::*, event_loop::EventLoop, window::WindowBuilder};
 use cgmath::*;
 use crate::camera::CameraController;
+pub use wgpu;
+pub use winit;
 
 // Renderer 는 Window 나 UI 에 대해서는 몰라야 한다
 // 비즈니스 로직에 대해서도 몰라야 한다. 오직 렌더링에 대해서만

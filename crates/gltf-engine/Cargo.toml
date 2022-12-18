@@ -8,10 +8,8 @@ rust-version = "1.65"
 
 [dependencies]
 winit = "0.27"
-env_logger = "0.9"
 log = "0.4"
 wgpu = "0.14"
-pollster = "0.2"
 bytemuck = { version = "1.4", features = [ "derive" ] }
 anyhow = "1.0"
 cgmath = "0.18"

@@ -1,3 +1,6 @@
+use gltf_engine::wgpu;
+use gltf_engine::winit;
+
 use winit::event::{DeviceEvent, ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::WindowBuilder;
