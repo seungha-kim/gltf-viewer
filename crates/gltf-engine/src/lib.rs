@@ -10,6 +10,7 @@ use winit::event_loop::ControlFlow;
 use winit::window::Window;
 use winit::{event::*, event_loop::EventLoop, window::WindowBuilder};
 use cgmath::*;
+use crate::camera::CameraController;
 
 // Renderer 는 Window 나 UI 에 대해서는 몰라야 한다
 // 비즈니스 로직에 대해서도 몰라야 한다. 오직 렌더링에 대해서만
@@ -30,7 +31,7 @@ use cgmath::*;
 // Vertex struct 를 굳이 만들 필요도 없음
 // 이 때 vertex layout 이 다른 유형마다 각각 Render pipeline 을 만들어주어야 함. shader 코드는 같아도 됨
 
-struct Renderer {
+pub struct Renderer {
     // pipeline resource
     render_pipeline: wgpu::RenderPipeline,
     depth_texture: texture::Texture,
@@ -171,7 +172,7 @@ impl VertexTexCoord {
 }
 
 impl Renderer {
-    async fn new(device: &wgpu::Device, queue: &wgpu::Queue, config: &wgpu::SurfaceConfiguration) -> Self { ;
+    pub async fn new(device: &wgpu::Device, queue: &wgpu::Queue, config: &wgpu::SurfaceConfiguration) -> Self { ;
         let node_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             entries: &[
                 wgpu::BindGroupLayoutEntry {
@@ -372,7 +373,7 @@ impl Renderer {
         }
     }
 
-    fn input(&mut self, event: &WindowEvent) -> bool {
+    pub fn input(&mut self, event: &WindowEvent) -> bool {
         match event {
             WindowEvent::KeyboardInput {
                 input:
@@ -399,14 +400,14 @@ impl Renderer {
         }
     }
 
-    fn update(&mut self, dt: instant::Duration, queue: &wgpu::Queue) {
+    pub fn update(&mut self, dt: instant::Duration, queue: &wgpu::Queue) {
         self.camera_controller.update_camera(&mut self.camera, dt);
         self.camera_uniform.update_view_proj(&self.camera, &self.projection);
 
         queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&[self.camera_uniform]));
     }
 
-    fn render(&mut self, device: &wgpu::Device, surface: &wgpu::Surface, queue: &wgpu::Queue) -> Result<(), wgpu::SurfaceError> {
+    pub fn render(&mut self, device: &wgpu::Device, surface: &wgpu::Surface, queue: &wgpu::Queue) -> Result<(), wgpu::SurfaceError> {
         let output = surface.get_current_texture()?;
         let view = output
             .texture
@@ -506,146 +507,12 @@ impl Renderer {
 
         Ok(())
     }
-}
 
-struct ViewerResource {
-    size: winit::dpi::PhysicalSize<u32>,
-    surface: wgpu::Surface,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    config: wgpu::SurfaceConfiguration,
-}
-
-impl ViewerResource {
-    pub async fn new(window: &winit::window::Window) -> Self {
-        let size = window.inner_size();
-
-        let instance = wgpu::Instance::new(wgpu::Backends::all());
-        let surface = unsafe { instance.create_surface(&window) };
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::default(),
-                compatible_surface: Some(&surface),
-                force_fallback_adapter: false,
-            })
-            .await
-            .unwrap();
-
-        let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    features: wgpu::Features::empty(),
-
-                    limits: if cfg!(target_arch = "wasm32") {
-                        wgpu::Limits::downlevel_webgl2_defaults()
-                    } else {
-                        wgpu::Limits::default()
-                    },
-                    label: None,
-                },
-                None,
-            )
-            .await
-            .unwrap();
-
-        let config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: surface.get_supported_formats(&adapter)[0],
-            width: size.width,
-            height: size.height,
-            present_mode: wgpu::PresentMode::Fifo,
-            alpha_mode: wgpu::CompositeAlphaMode::Auto,
-        };
-        surface.configure(&device, &config);
-
-        Self {
-            size,
-            surface,
-            device,
-            queue,
-            config,
-        }
+    pub fn mouse_pressed(&self) -> bool {
+        self.mouse_pressed
     }
-    pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
-        if new_size.width > 0 && new_size.height > 0 {
-            self.size = new_size;
-            self.config.width = new_size.width;
-            self.config.height = new_size.height;
-            self.surface.configure(&self.device, &self.config);
-        }
+
+    pub fn camera_controller_mut(&mut self) -> &mut CameraController {
+        &mut self.camera_controller
     }
-}
-
-pub async fn run() {
-    env_logger::builder().filter_level(log::LevelFilter::Warn).init();
-
-    let event_loop = EventLoop::new();
-    let window = WindowBuilder::new().build(&event_loop).unwrap();
-
-    let mut vr = ViewerResource::new(&window).await;
-    let mut renderer = Renderer::new(
-        &vr.device,
-        &vr.queue,
-        &vr.config,
-    ).await;
-    let mut last_render_time = instant::Instant::now();
-
-    event_loop.run(move |event, _, control_flow| match event {
-        Event::DeviceEvent {
-            event: DeviceEvent::MouseMotion { delta, },
-            ..
-        } => if renderer.mouse_pressed {
-            renderer.camera_controller.process_mouse(delta.0, delta.1)
-        }
-        Event::WindowEvent {
-            ref event,
-            window_id,
-        } if window_id == window.id() && !renderer.input(event) => {
-            match event {
-                #[cfg(not(target_arch = "wasm32"))]
-                WindowEvent::CloseRequested
-                | WindowEvent::KeyboardInput {
-                    input:
-                    KeyboardInput {
-                        state: ElementState::Pressed,
-                        virtual_keycode: Some(VirtualKeyCode::Escape),
-                        ..
-                    },
-                    ..
-                } => *control_flow = ControlFlow::Exit,
-                WindowEvent::Resized(physical_size) => {
-                    vr.resize(*physical_size);
-                    renderer.resize(*physical_size, &vr.device, &vr.config);
-                }
-                WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
-                    vr.resize(**new_inner_size);
-                    renderer.resize(**new_inner_size, &vr.device, &vr.config);
-                }
-                _ => {}
-            }
-        }
-        Event::RedrawRequested(window_id) if window_id == window.id() => {
-            let now = instant::Instant::now();
-            let dt = now - last_render_time;
-            last_render_time = now;
-            renderer.update(dt, &vr.queue);
-            match renderer.render(&vr.device, &vr.surface, &vr.queue) {
-                Ok(_) => {}
-
-                Err(wgpu::SurfaceError::Lost) => {
-                    let size = window.inner_size();
-                    vr.resize(size);
-                    renderer.resize(size, &vr.device, &vr.config)
-                },
-
-                Err(wgpu::SurfaceError::OutOfMemory) => *control_flow = ControlFlow::Exit,
-
-                Err(e) => eprintln!("{:?}", e),
-            }
-        }
-        Event::MainEventsCleared => {
-            window.request_redraw();
-        }
-        _ => {}
-    });
 }
