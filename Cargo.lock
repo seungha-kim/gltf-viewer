@@ -607,6 +607,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "gltf-engine"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytemuck",
+ "cgmath",
+ "env_logger",
+ "gltf",
+ "image 0.24.4",
+ "instant",
+ "log",
+ "pollster",
+ "wgpu",
+ "winit",
+]
+
+[[package]]
 name = "gltf-json"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -623,23 +640,6 @@ name = "gltf-test"
 version = "0.1.0"
 dependencies = [
  "gltf",
-]
-
-[[package]]
-name = "gltf-viewer"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bytemuck",
- "cgmath",
- "env_logger",
- "gltf",
- "image 0.24.4",
- "instant",
- "log",
- "pollster",
- "wgpu",
- "winit",
 ]
 
 [[package]]
