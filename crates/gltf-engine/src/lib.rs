@@ -6,9 +6,7 @@ mod image_util;
 
 use wgpu::include_wgsl;
 use wgpu::util::DeviceExt;
-use winit::event_loop::ControlFlow;
-use winit::window::Window;
-use winit::{event::*, event_loop::EventLoop, window::WindowBuilder};
+use winit::event::*;
 use cgmath::*;
 use crate::camera::CameraController;
 pub use wgpu;
@@ -33,9 +31,16 @@ pub use winit;
 // Vertex struct 를 굳이 만들 필요도 없음
 // 이 때 vertex layout 이 다른 유형마다 각각 Render pipeline 을 만들어주어야 함. shader 코드는 같아도 됨
 
+const ENGINE_COLOR_LABEL: &str = "engine color target";
+const ENGINE_DEPTH_LABEL: &str = "engine depth target";
+
 pub struct Renderer {
+    target_width: u32,
+    target_height: u32,
+
     // pipeline resource
     render_pipeline: wgpu::RenderPipeline,
+    color_texture: texture::Texture,
     depth_texture: texture::Texture,
 
     model_root: model::ImportedGltf,
@@ -64,6 +69,8 @@ pub struct Renderer {
     // etc
     #[allow(dead_code)]
     white_texture: texture::Texture,
+
+    pending_nodes: Vec<usize>,
 }
 
 
@@ -174,7 +181,7 @@ impl VertexTexCoord {
 }
 
 impl Renderer {
-    pub async fn new(device: &wgpu::Device, queue: &wgpu::Queue, config: &wgpu::SurfaceConfiguration) -> Self { ;
+    pub async fn new(device: &wgpu::Device, queue: &wgpu::Queue, width: u32, height: u32, target_format: wgpu::TextureFormat) -> Self {
         let node_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             entries: &[
                 wgpu::BindGroupLayoutEntry {
@@ -246,7 +253,7 @@ impl Renderer {
         });
 
         let camera = camera::Camera::new((0.0, 5.0, 10.0), cgmath::Deg(-90.0), cgmath::Deg(-20.0));
-        let projection = camera::Projection::new(config.width, config.height, cgmath::Deg(45.0), 0.1, 100.0);
+        let projection = camera::Projection::new(width, height, cgmath::Deg(45.0), 0.1, 100.0);
         let camera_controller = camera::CameraController::new(4.0, 0.4);
 
         let mut camera_uniform = CameraUniform::new();
@@ -289,7 +296,8 @@ impl Renderer {
 
         let shader = device.create_shader_module(include_wgsl!("shader.wgsl"));
 
-        let depth_texture = texture::Texture::create_depth_texture(&device, &config, "depth_texture");
+        let color_texture = texture::Texture::create_color_texture(&device, width, height, ENGINE_COLOR_LABEL);
+        let depth_texture = texture::Texture::create_depth_texture(&device, width, height, ENGINE_DEPTH_LABEL);
 
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -318,7 +326,7 @@ impl Renderer {
                 module: &shader,
                 entry_point: "fs_main",
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: config.format,
+                    format: target_format,
                     blend: Some(wgpu::BlendState::REPLACE),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -351,6 +359,8 @@ impl Renderer {
         });
 
         Self {
+            target_width: width,
+            target_height: height,
             render_pipeline,
             model_root,
             camera,
@@ -363,18 +373,26 @@ impl Renderer {
             camera_bind_group_layout,
             node_bind_group_layout,
             material_bind_group_layout,
+            color_texture,
             depth_texture,
             white_texture,
+            pending_nodes: Vec::new(),
         }
     }
 
-    pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>, device: &wgpu::Device, config: &wgpu::SurfaceConfiguration) {
-        if new_size.width > 0 && new_size.height > 0 {
-            self.projection.resize(new_size.width, new_size.height);
-            self.depth_texture = texture::Texture::create_depth_texture(&device, &config, "depth_texture")
+    pub fn resize(&mut self, width: u32, height: u32, device: &wgpu::Device) -> bool {
+        let changed = width > 0 && height > 0 && self.target_width != width && self.target_height != height;
+        if changed {
+            self.projection.resize(width, height);
+            self.color_texture = texture::Texture::create_color_texture(&device, width, height, ENGINE_COLOR_LABEL);
+            self.depth_texture = texture::Texture::create_depth_texture(&device, width, height, ENGINE_DEPTH_LABEL);
+            self.target_width = width;
+            self.target_height = height;
         }
+        changed
     }
 
+    // TODO: eframe 대응
     pub fn input(&mut self, event: &WindowEvent) -> bool {
         match event {
             WindowEvent::KeyboardInput {
@@ -407,13 +425,40 @@ impl Renderer {
         self.camera_uniform.update_view_proj(&self.camera, &self.projection);
 
         queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&[self.camera_uniform]));
+
+        self.pending_nodes.clear();
+
+        {
+            let mut node_stack: Vec<(&model::Node, Matrix4<f32>)> = Vec::new();
+
+            let scene = &self.model_root.scenes[self.model_root.default_scene_id];
+            for root_node_index in &scene.nodes {
+                node_stack.push((&self.model_root.nodes[*root_node_index], Matrix4::identity()));
+            }
+
+            while let Some((node, upper_transform)) = node_stack.pop() {
+                // TODO: 매번 write_buffer 할 필요 없음
+                // TODO: cgmath::Matrix4 가 bytemuck 이랑 연동되면 좋을텐데 -> nalgebra?
+                let transform = upper_transform * node.transform;
+                let rs = Matrix3::from_cols(transform.x.truncate(), transform.y.truncate(), transform.z.truncate());
+                let node_uniform = NodeUniform {
+                    model_mat: transform.into(),
+                    normal_mat: Matrix4::from(rs.invert().unwrap().transpose()).into(),
+                };
+                queue.write_buffer(&node.uniform_buffer, 0, bytemuck::cast_slice(&[node_uniform]));
+
+                self.pending_nodes.push(node.gltf_index);
+
+                // visit children
+                for child_index in &node.children {
+                    let child = &self.model_root.nodes[*child_index];
+                    node_stack.push((child, transform))
+                }
+            }
+        }
     }
 
-    pub fn render(&mut self, device: &wgpu::Device, surface: &wgpu::Surface, queue: &wgpu::Queue) -> Result<(), wgpu::SurfaceError> {
-        let output = surface.get_current_texture()?;
-        let view = output
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
+    pub fn render(&mut self, device: &wgpu::Device) -> Result<wgpu::CommandBuffer, wgpu::SurfaceError> {
         let mut encoder = device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Render Encoder"),
@@ -422,7 +467,7 @@ impl Renderer {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
+                    view: &self.color_texture.view,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
@@ -446,25 +491,9 @@ impl Renderer {
             render_pass.set_pipeline(&self.render_pipeline);
             render_pass.set_bind_group(1, &self.camera_bind_group, &[]);
 
-            let mut node_stack: Vec<(&model::Node, Matrix4<f32>)> = Vec::new();
+            for node_id in &self.pending_nodes {
+                let node = &self.model_root.nodes[*node_id];
 
-            let scene = &self.model_root.scenes[self.model_root.default_scene_id];
-            for root_node_index in &scene.nodes {
-                node_stack.push((&self.model_root.nodes[*root_node_index], Matrix4::identity()));
-            }
-
-            while let Some((node, upper_transform)) = node_stack.pop() {
-                // TODO: 매번 write_buffer 할 필요 없음
-                // TODO: cgmath::Matrix4 가 bytemuck 이랑 연동되면 좋을텐데 -> nalgebra?
-                let transform = upper_transform * node.transform;
-                let rs = Matrix3::from_cols(transform.x.truncate(), transform.y.truncate(), transform.z.truncate());
-                let node_uniform = NodeUniform {
-                    model_mat: transform.into(),
-                    normal_mat: Matrix4::from(rs.invert().unwrap().transpose()).into(),
-                };
-                queue.write_buffer(&node.uniform_buffer, 0, bytemuck::cast_slice(&[node_uniform]));
-
-                // draw mesh
                 if let Some(mesh_index) = node.mesh_index {
                     let mesh = &self.model_root.meshes[mesh_index];
                     for primitive in mesh.primitives.iter() {
@@ -494,20 +523,10 @@ impl Renderer {
                         render_pass.draw_indexed(0..(*num_indices as u32), 0, 0..1);
                     }
                 }
-
-                // visit children
-                for child_index in &node.children {
-                    let child = &self.model_root.nodes[*child_index];
-                    node_stack.push((child, transform))
-                }
             }
         }
         let command_buffer = encoder.finish();
-
-        queue.submit(std::iter::once(command_buffer));
-        output.present();
-
-        Ok(())
+        Ok(command_buffer)
     }
 
     pub fn mouse_pressed(&self) -> bool {
@@ -516,5 +535,9 @@ impl Renderer {
 
     pub fn camera_controller_mut(&mut self) -> &mut CameraController {
         &mut self.camera_controller
+    }
+
+    pub fn color_texture_view(&self) -> &wgpu::TextureView {
+        &self.color_texture.view
     }
 }
