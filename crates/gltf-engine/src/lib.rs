@@ -6,7 +6,6 @@ mod image_util;
 
 use wgpu::include_wgsl;
 use wgpu::util::DeviceExt;
-use winit::event::*;
 use cgmath::*;
 use crate::camera::CameraController;
 pub use wgpu;
@@ -393,27 +392,24 @@ impl Renderer {
     }
 
     // TODO: eframe 대응
-    pub fn input(&mut self, event: &WindowEvent) -> bool {
+    pub fn input(&mut self, event: &InputEvent) -> bool {
         match event {
-            WindowEvent::KeyboardInput {
-                input:
-                KeyboardInput {
-                    virtual_keycode: Some(key),
-                    state,
-                    ..
-                },
-                ..
-            } => self.camera_controller.process_keyboard(*key, *state),
-            WindowEvent::MouseWheel { delta, .. } => {
-                self.camera_controller.process_scroll(delta);
+            InputEvent::KeyPressing(key) => self.camera_controller.process_keyboard(*key, true),
+            InputEvent::KeyUp(key) => self.camera_controller.process_keyboard(*key, false),
+            InputEvent::MouseWheel { delta_y, .. } => {
+                self.camera_controller.process_scroll(*delta_y);
                 true
             }
-            WindowEvent::MouseInput {
-                button: MouseButton::Left,
-                state,
-                ..
-            } => {
-                self.mouse_pressed = *state == ElementState::Pressed;
+            InputEvent::MouseLeftDown => {
+                self.mouse_pressed = true;
+                true
+            }
+            InputEvent::MouseLeftUp => {
+                self.mouse_pressed = false;
+                true
+            }
+            InputEvent::MouseMove { delta_x, delta_y } => {
+                self.camera_controller.process_mouse(*delta_x, *delta_y);
                 true
             }
             _ => false,
@@ -540,4 +536,23 @@ impl Renderer {
     pub fn color_texture_view(&self) -> &wgpu::TextureView {
         &self.color_texture.view
     }
+}
+
+pub enum InputEvent {
+    KeyPressing(AbstractKey),
+    KeyUp(AbstractKey),
+    MouseWheel { delta_x: f32, delta_y: f32 },
+    MouseLeftDown,
+    MouseLeftUp,
+    MouseMove { delta_x: f32, delta_y: f32 },
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum AbstractKey {
+    CameraMoveForward,
+    CameraMoveBackward,
+    CameraMoveLeft,
+    CameraMoveRight,
+    CameraMoveDown,
+    CameraMoveUp,
 }

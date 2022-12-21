@@ -2,6 +2,7 @@ use std::f32::consts::FRAC_PI_2;
 use cgmath::{InnerSpace, Matrix4, perspective, Point3, Rad, Vector3};
 use winit::dpi::PhysicalPosition;
 use winit::event::{ElementState, MouseScrollDelta, VirtualKeyCode};
+use crate::AbstractKey;
 
 const SAFE_FRAC_PI_2: f32 = FRAC_PI_2 - 0.0001;
 
@@ -118,30 +119,30 @@ impl CameraController {
         }
     }
 
-    pub fn process_keyboard(&mut self, key: VirtualKeyCode, state: ElementState) -> bool{
-        let amount = if state == ElementState::Pressed { 1.0 } else { 0.0 };
+    pub fn process_keyboard(&mut self, key: AbstractKey, pressing: bool) -> bool{
+        let amount = if pressing { 1.0 } else { 0.0 };
         match key {
-            VirtualKeyCode::W | VirtualKeyCode::Up => {
+            AbstractKey::CameraMoveForward => {
                 self.amount_forward = amount;
                 true
             }
-            VirtualKeyCode::S | VirtualKeyCode::Down => {
+            AbstractKey::CameraMoveBackward => {
                 self.amount_backward = amount;
                 true
             }
-            VirtualKeyCode::A | VirtualKeyCode::Left => {
+            AbstractKey::CameraMoveLeft => {
                 self.amount_left = amount;
                 true
             }
-            VirtualKeyCode::D | VirtualKeyCode::Right => {
+            AbstractKey::CameraMoveRight => {
                 self.amount_right = amount;
                 true
             }
-            VirtualKeyCode::E => {
+            AbstractKey::CameraMoveUp => {
                 self.amount_up = amount;
                 true
             }
-            VirtualKeyCode::Q => {
+            AbstractKey::CameraMoveDown => {
                 self.amount_down = amount;
                 true
             }
@@ -149,19 +150,13 @@ impl CameraController {
         }
     }
 
-    pub fn process_mouse(&mut self, mouse_dx: f64, mouse_dy: f64) {
-        self.rotate_horizontal = mouse_dx as f32;
-        self.rotate_vertical = mouse_dy as f32;
+    pub fn process_mouse(&mut self, mouse_dx: f32, mouse_dy: f32) {
+        self.rotate_horizontal = mouse_dx;
+        self.rotate_vertical = mouse_dy;
     }
 
-    pub fn process_scroll(&mut self, delta: &MouseScrollDelta) {
-        self.scroll = -match delta {
-            MouseScrollDelta::LineDelta(_, scroll) => scroll * 100.0,
-            MouseScrollDelta::PixelDelta(PhysicalPosition {
-                                             y: scroll,
-                                             ..
-                                         }) => *scroll as f32,
-        };
+    pub fn process_scroll(&mut self, delta: f32) {
+        self.scroll = -delta;
     }
 
     pub fn update_camera(&mut self, camera: &mut Camera, dt: instant::Duration) {

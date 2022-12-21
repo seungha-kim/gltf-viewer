@@ -1,11 +1,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
 use std::sync::Arc;
-use gltf_engine::wgpu;
+use std::time::Duration;
+use gltf_engine::{AbstractKey, InputEvent, wgpu};
 use gltf_engine::winit;
 use gltf_engine::Renderer;
 
 use eframe::egui;
+use eframe::egui::{Pos2, Vec2};
 
 fn main() {
     // Log to stdout (if you run with `RUST_LOG=debug`).
@@ -22,9 +24,18 @@ fn main() {
     )
 }
 
+enum AnimationState {
+    Idle,
+    Animating { prev_time: Option<instant::Instant>, now: instant::Instant }
+}
+
 struct PaintResource {
     renderer: Renderer,
-    prev_time: instant::Instant,
+    // 프레임마다 딱 한 번 변경되어야 하는 정보인데... = update or
+    // 프레임 안에서 아무런 InputEvent 가 발생하지 않았다면 Idle
+    any_key_pressing: bool,
+    mouse_left_button_pressing: bool,
+    animation_state: AnimationState,
     pipeline: wgpu::RenderPipeline,
     bind_group_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
@@ -109,7 +120,9 @@ impl PaintResource {
 
         Self {
             renderer,
-            prev_time,
+            any_key_pressing: false,
+            mouse_left_button_pressing: false,
+            animation_state: AnimationState::Idle,
             pipeline,
             bind_group_layout,
             sampler,
@@ -142,7 +155,9 @@ impl PaintResource {
     }
 }
 
-struct MyApp;
+struct MyApp {
+    prev_pointer_pos: Option<Pos2>,
+}
 
 impl MyApp {
     fn new(cc: &eframe::CreationContext) -> Option<Self> {
@@ -159,13 +174,130 @@ impl MyApp {
             .paint_callback_resources
             .insert(paint_resource);
 
-        Some(MyApp)
+        Some(MyApp {
+            prev_pointer_pos: None,
+        })
     }
 }
 
 
 impl eframe::App for MyApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        let any_key_pressing = !ctx.input().keys_down.is_empty();
+        let mut request_repaint = any_key_pressing;
+
+        if ctx.input().keys_down.contains(&egui::Key::Escape) {
+            frame.close();
+        };
+        {
+            // 조금 더 추상화가 필요하겠네..
+            for e in &ctx.input().events {
+                log::info!("MyApp event: {:?}", e);
+                let input_event = match e {
+                    egui::Event::Key { key, pressed, .. } => {
+                        let abstract_key = match key {
+                            egui::Key::ArrowUp | egui::Key::W => AbstractKey::CameraMoveForward,
+                            egui::Key::ArrowDown | egui::Key::S => AbstractKey::CameraMoveBackward,
+                            egui::Key::ArrowLeft | egui::Key::A => AbstractKey::CameraMoveLeft,
+                            egui::Key::ArrowRight | egui::Key::D => AbstractKey::CameraMoveRight,
+                            egui::Key::Q => AbstractKey::CameraMoveDown,
+                            egui::Key::E => AbstractKey::CameraMoveUp,
+                            _ => continue,
+                        };
+                        if *pressed {
+                            InputEvent::KeyPressing(abstract_key)
+                        } else {
+                            InputEvent::KeyUp(abstract_key)
+                        }
+                    }
+                    egui::Event::Scroll(vec) => {
+                        InputEvent::MouseWheel { delta_x: vec.x, delta_y: vec.y }
+                    }
+                    egui::Event::PointerButton {
+                        button, pressed, ..
+                    } => {
+                        if button == &egui::PointerButton::Primary {
+                            if *pressed {
+                                InputEvent::MouseLeftDown
+                            } else {
+                                InputEvent::MouseLeftUp
+                            }
+                        } else {
+                            continue;
+                        }
+                    }
+                    egui::Event::PointerMoved(vec) => {
+                        if let Some(prev_pointer_pos) = self.prev_pointer_pos {
+                            let mut delta = *vec - prev_pointer_pos;
+                            delta *= 0.1;
+                            self.prev_pointer_pos = Some(*vec);
+                            InputEvent::MouseMove { delta_x: delta.x, delta_y: delta.y }
+                        } else {
+                            self.prev_pointer_pos = Some(*vec);
+                            continue
+                        }
+                    }
+                    _ => continue,
+                };
+                {
+                    let wgpu_render_state = frame.wgpu_render_state().unwrap();
+                    let mut write_lock = wgpu_render_state
+                        .renderer
+                        .write();
+                    let resource = write_lock
+                        .paint_callback_resources
+                        .get_mut::<PaintResource>()
+                        .unwrap();
+                    // TODO: 이거 renderer 가 아니구만
+                    resource.renderer.input(&input_event);
+                    match &input_event {
+                        InputEvent::MouseLeftDown => {
+                            resource.mouse_left_button_pressing = true;
+                        }
+                        InputEvent::MouseLeftUp => {
+                            resource.mouse_left_button_pressing = false;
+                        }
+                        _ => {}
+                    }
+                }
+                request_repaint = true;
+            }
+        }
+
+        {
+            let wgpu_render_state = frame.wgpu_render_state().unwrap();
+            let mut write_lock = wgpu_render_state
+                .renderer
+                .write();
+            let resource = write_lock
+                .paint_callback_resources
+                .get_mut::<PaintResource>()
+                .unwrap();
+
+            resource.any_key_pressing = any_key_pressing;
+
+            let animating = resource.any_key_pressing || resource.mouse_left_button_pressing;
+            resource.animation_state = match &resource.animation_state {
+                AnimationState::Idle if animating => AnimationState::Animating {
+                    prev_time: None,
+                    now: instant::Instant::now(),
+                },
+                AnimationState::Idle if !animating => AnimationState::Idle,
+                AnimationState::Animating { now, .. } if animating => AnimationState::Animating {
+                    prev_time: Some(*now),
+                    now: instant::Instant::now(),
+                },
+                AnimationState::Animating { .. } if !animating => AnimationState::Idle,
+                _ => panic!("Impossible state"),
+            }
+        }
+
+        // ctx.request_repaint 가 write lock 을 필요로 하기 때문에,
+        // 다른 lock 이 걸려있지 않은 순간에 호출해야 함
+        if request_repaint {
+            ctx.request_repaint();
+        }
+
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::ScrollArea::both()
                 .auto_shrink([false; 2])
@@ -197,9 +329,12 @@ impl MyApp {
             .prepare(move |device, queue, _encoder, resource| {
                 let resource: &mut PaintResource = resource.get_mut().unwrap();
 
-                let now = instant::Instant::now();
-                let dt = now - resource.prev_time;
-                resource.prev_time = now;
+                let dt = match resource.animation_state {
+                    AnimationState::Idle | AnimationState::Animating { prev_time: None, .. } => Duration::ZERO,
+                    AnimationState::Animating { prev_time: Some(prev_time), now } => {
+                        now - prev_time
+                    }
+                };
 
                 let physical_size = rect.size() * rect.aspect_ratio();
                 let changed = resource.renderer.resize(physical_size.x as u32, physical_size.y as u32, device);
