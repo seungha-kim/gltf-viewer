@@ -4,6 +4,7 @@ mod model;
 mod import;
 mod image_util;
 
+use std::collections::HashSet;
 use wgpu::include_wgsl;
 use wgpu::util::DeviceExt;
 use cgmath::*;
@@ -33,7 +34,43 @@ pub use winit;
 const ENGINE_COLOR_LABEL: &str = "engine color target";
 const ENGINE_DEPTH_LABEL: &str = "engine depth target";
 
-pub struct Renderer {
+enum AnimationState {
+    Idle,
+    Animating(AnimationSession)
+}
+
+impl AnimationState {
+    fn must_be_idle(&self) -> bool {
+        if let AnimationState::Animating(session) = self {
+            if session.pressing_mouse_buttons.is_empty() && session.pressing_keys.is_empty() {
+                return true;
+            }
+        }
+        false
+    }
+}
+
+struct AnimationSession {
+    pressing_keys: HashSet<AbstractKey>,
+    pressing_mouse_buttons: HashSet<AbstractMouseButton>,
+    prev_time: Option<instant::Instant>,
+    now: instant::Instant,
+}
+
+impl Default for AnimationSession {
+    fn default() -> Self {
+        Self {
+            pressing_keys: HashSet::new(),
+            pressing_mouse_buttons: HashSet::new(),
+            prev_time: None,
+            now: instant::Instant::now(),
+        }
+    }
+}
+
+pub struct Engine {
+    animation_state: AnimationState,
+
     target_width: u32,
     target_height: u32,
 
@@ -179,7 +216,7 @@ impl VertexTexCoord {
     }
 }
 
-impl Renderer {
+impl Engine {
     pub async fn new(device: &wgpu::Device, queue: &wgpu::Queue, width: u32, height: u32, target_format: wgpu::TextureFormat) -> Self {
         let node_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             entries: &[
@@ -358,6 +395,7 @@ impl Renderer {
         });
 
         Self {
+            animation_state: AnimationState::Idle,
             target_width: width,
             target_height: height,
             render_pipeline,
@@ -393,6 +431,36 @@ impl Renderer {
 
     // TODO: eframe 대응
     pub fn input(&mut self, event: &InputEvent) -> bool {
+        match (event, &mut self.animation_state) {
+            (InputEvent::MouseLeftDown, AnimationState::Idle) => {
+                let mut session = AnimationSession::default();
+                session.pressing_mouse_buttons.insert(AbstractMouseButton::Primary);
+                self.animation_state = AnimationState::Animating(session);
+            }
+            (InputEvent::MouseLeftDown, AnimationState::Animating(session)) => {
+                session.pressing_mouse_buttons.insert(AbstractMouseButton::Primary);
+            }
+            (InputEvent::MouseLeftUp, AnimationState::Animating(session)) => {
+                session.pressing_mouse_buttons.remove(&AbstractMouseButton::Primary);
+            }
+            (InputEvent::KeyPressing(key), AnimationState::Idle) => {
+                let mut session = AnimationSession::default();
+                session.pressing_keys.insert(*key);
+                self.animation_state = AnimationState::Animating(session);
+            }
+            (InputEvent::KeyPressing(key), AnimationState::Animating(session)) => {
+                session.pressing_keys.insert(*key);
+            }
+            (InputEvent::KeyUp(key), AnimationState::Animating(session)) => {
+                session.pressing_keys.remove(key);
+            }
+            _ => {}
+        }
+
+        if self.animation_state.must_be_idle() {
+            self.animation_state = AnimationState::Idle;
+        }
+
         match event {
             InputEvent::KeyPressing(key) => self.camera_controller.process_keyboard(*key, true),
             InputEvent::KeyUp(key) => self.camera_controller.process_keyboard(*key, false),
@@ -416,7 +484,23 @@ impl Renderer {
         }
     }
 
-    pub fn update(&mut self, dt: instant::Duration, queue: &wgpu::Queue) {
+    pub fn update(&mut self, queue: &wgpu::Queue) {
+        if let AnimationState::Animating(session) = &mut self.animation_state {
+            session.prev_time = Some(session.now);
+            session.now = instant::Instant::now();
+        }
+
+        let dt = match &self.animation_state {
+            AnimationState::Idle
+            | AnimationState::Animating(AnimationSession { prev_time: None, .. }) => instant::Duration::ZERO,
+            AnimationState::Animating(
+            AnimationSession {prev_time: Some(prev_time), now, ..})=> {
+                *now - *prev_time
+            }
+        };
+
+        // if animating, request repaint next frame
+
         self.camera_controller.update_camera(&mut self.camera, dt);
         self.camera_uniform.update_view_proj(&self.camera, &self.projection);
 
@@ -525,6 +609,10 @@ impl Renderer {
         Ok(command_buffer)
     }
 
+    pub fn end_frame(&mut self) {
+        // unimplemented!();
+    }
+
     pub fn mouse_pressed(&self) -> bool {
         self.mouse_pressed
     }
@@ -547,7 +635,7 @@ pub enum InputEvent {
     MouseMove { delta_x: f32, delta_y: f32 },
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub enum AbstractKey {
     CameraMoveForward,
     CameraMoveBackward,
@@ -555,4 +643,11 @@ pub enum AbstractKey {
     CameraMoveRight,
     CameraMoveDown,
     CameraMoveUp,
+}
+
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+pub enum AbstractMouseButton {
+    Primary,
+    Secondary,
+    Middle,
 }

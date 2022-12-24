@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use gltf_engine::{AbstractKey, InputEvent, wgpu};
 use gltf_engine::winit;
-use gltf_engine::Renderer;
+use gltf_engine::Engine;
 
 use eframe::egui;
 use eframe::egui::{Pos2, Vec2};
@@ -24,18 +24,8 @@ fn main() {
     )
 }
 
-enum AnimationState {
-    Idle,
-    Animating { prev_time: Option<instant::Instant>, now: instant::Instant }
-}
-
 struct PaintResource {
-    renderer: Renderer,
-    // 프레임마다 딱 한 번 변경되어야 하는 정보인데... = update or
-    // 프레임 안에서 아무런 InputEvent 가 발생하지 않았다면 Idle
-    any_key_pressing: bool,
-    mouse_left_button_pressing: bool,
-    animation_state: AnimationState,
+    engine: Engine,
     pipeline: wgpu::RenderPipeline,
     bind_group_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
@@ -97,7 +87,7 @@ impl PaintResource {
         });
 
         let renderer = pollster::block_on(async {
-            Renderer::new(
+            Engine::new(
                 device,
                 queue,
                 100, 100, target_format,
@@ -116,13 +106,8 @@ impl PaintResource {
             }
         );
 
-        let prev_time = instant::Instant::now();
-
         Self {
-            renderer,
-            any_key_pressing: false,
-            mouse_left_button_pressing: false,
-            animation_state: AnimationState::Idle,
+            engine: renderer,
             pipeline,
             bind_group_layout,
             sampler,
@@ -143,7 +128,7 @@ impl PaintResource {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(self.renderer.color_texture_view()),
+                    resource: wgpu::BindingResource::TextureView(self.engine.color_texture_view()),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -249,16 +234,7 @@ impl eframe::App for MyApp {
                         .get_mut::<PaintResource>()
                         .unwrap();
                     // TODO: 이거 renderer 가 아니구만
-                    resource.renderer.input(&input_event);
-                    match &input_event {
-                        InputEvent::MouseLeftDown => {
-                            resource.mouse_left_button_pressing = true;
-                        }
-                        InputEvent::MouseLeftUp => {
-                            resource.mouse_left_button_pressing = false;
-                        }
-                        _ => {}
-                    }
+                    resource.engine.input(&input_event);
                 }
                 request_repaint = true;
             }
@@ -274,22 +250,6 @@ impl eframe::App for MyApp {
                 .get_mut::<PaintResource>()
                 .unwrap();
 
-            resource.any_key_pressing = any_key_pressing;
-
-            let animating = resource.any_key_pressing || resource.mouse_left_button_pressing;
-            resource.animation_state = match &resource.animation_state {
-                AnimationState::Idle if animating => AnimationState::Animating {
-                    prev_time: None,
-                    now: instant::Instant::now(),
-                },
-                AnimationState::Idle if !animating => AnimationState::Idle,
-                AnimationState::Animating { now, .. } if animating => AnimationState::Animating {
-                    prev_time: Some(*now),
-                    now: instant::Instant::now(),
-                },
-                AnimationState::Animating { .. } if !animating => AnimationState::Idle,
-                _ => panic!("Impossible state"),
-            }
         }
 
         // ctx.request_repaint 가 write lock 을 필요로 하기 때문에,
@@ -322,27 +282,20 @@ impl MyApp {
         // TODO: scale factor
         let (rect, response) =
             ui.allocate_at_least(egui::Vec2::new(available.width(), available.height()), egui::Sense::drag());
-        // TODO: rotate camera from drag response
-        // TODO: translate camera from key stroke
 
         let cb = egui_wgpu::CallbackFn::new()
             .prepare(move |device, queue, _encoder, resource| {
                 let resource: &mut PaintResource = resource.get_mut().unwrap();
 
-                let dt = match resource.animation_state {
-                    AnimationState::Idle | AnimationState::Animating { prev_time: None, .. } => Duration::ZERO,
-                    AnimationState::Animating { prev_time: Some(prev_time), now } => {
-                        now - prev_time
-                    }
-                };
-
                 let physical_size = rect.size() * rect.aspect_ratio();
-                let changed = resource.renderer.resize(physical_size.x as u32, physical_size.y as u32, device);
+                let changed = resource.engine.resize(physical_size.x as u32, physical_size.y as u32, device);
                 if changed {
                     resource.update_bind_group(device);
                 }
-                resource.renderer.update(dt, queue);
-                let command_buffer = resource.renderer.render(device).expect("Failed to render");
+                resource.engine.update(queue);
+                // TODO: parallelize
+                let command_buffer = resource.engine.render(device).expect("Failed to render");
+                resource.engine.end_frame();
 
                 vec![command_buffer]
             })
