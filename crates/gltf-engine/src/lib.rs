@@ -48,6 +48,13 @@ impl AnimationState {
         }
         false
     }
+
+    fn animation_session(&self) -> Option<&AnimationSession> {
+        match self {
+            AnimationState::Idle => None,
+            AnimationState::Animating(session) => Some(session),
+        }
+    }
 }
 
 struct AnimationSession {
@@ -55,6 +62,12 @@ struct AnimationSession {
     pressing_mouse_buttons: HashSet<AbstractMouseButton>,
     prev_time: Option<instant::Instant>,
     now: instant::Instant,
+}
+
+impl AnimationSession {
+    fn is_rotating_usnig_mouse(&self) -> bool {
+        self.pressing_mouse_buttons.contains(&AbstractMouseButton::Primary)
+    }
 }
 
 impl Default for AnimationSession {
@@ -477,8 +490,12 @@ impl Engine {
                 true
             }
             InputEvent::MouseMove { delta_x, delta_y } => {
-                self.camera_controller.process_mouse(*delta_x, *delta_y);
-                true
+                if self.animation_state.animation_session().map(|s| s.is_rotating_usnig_mouse()).unwrap_or(false) {
+                    self.camera_controller.process_mouse(*delta_x, *delta_y);
+                    true
+                } else {
+                    false
+                }
             }
             _ => false,
         }

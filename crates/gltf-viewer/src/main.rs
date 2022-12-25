@@ -233,23 +233,10 @@ impl eframe::App for MyApp {
                         .paint_callback_resources
                         .get_mut::<PaintResource>()
                         .unwrap();
-                    // TODO: 이거 renderer 가 아니구만
                     resource.engine.input(&input_event);
                 }
                 request_repaint = true;
             }
-        }
-
-        {
-            let wgpu_render_state = frame.wgpu_render_state().unwrap();
-            let mut write_lock = wgpu_render_state
-                .renderer
-                .write();
-            let resource = write_lock
-                .paint_callback_resources
-                .get_mut::<PaintResource>()
-                .unwrap();
-
         }
 
         // ctx.request_repaint 가 write lock 을 필요로 하기 때문에,
