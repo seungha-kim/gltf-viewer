@@ -3,7 +3,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 use gltf_engine::{AbstractKey, InputEvent, wgpu};
-use gltf_engine::winit;
 use gltf_engine::Engine;
 
 use eframe::egui;

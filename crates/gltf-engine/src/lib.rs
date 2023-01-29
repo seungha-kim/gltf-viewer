@@ -10,7 +10,6 @@ use wgpu::util::DeviceExt;
 use cgmath::*;
 use crate::camera::CameraController;
 pub use wgpu;
-pub use winit;
 
 // Renderer 는 Window 나 UI 에 대해서는 몰라야 한다
 // 비즈니스 로직에 대해서도 몰라야 한다. 오직 렌더링에 대해서만
@@ -60,6 +59,8 @@ impl AnimationState {
 struct AnimationSession {
     pressing_keys: HashSet<AbstractKey>,
     pressing_mouse_buttons: HashSet<AbstractMouseButton>,
+    // TODO: 키보드/마우스 인터랙션이 시간을 공유하다 보니까, 마우스 버튼을 누르고 있는 상태에서 키보드로 움직였다 멈췄다 하면 문제가 생김
+    // TODO: 키보드/마우스 인터랙션 세션 데이터를 각각 관리해야 할듯
     prev_time: Option<instant::Instant>,
     now: instant::Instant,
 }

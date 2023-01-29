@@ -1,7 +1,5 @@
 use std::f32::consts::FRAC_PI_2;
 use cgmath::{InnerSpace, Matrix4, perspective, Point3, Rad, Vector3};
-use winit::dpi::PhysicalPosition;
-use winit::event::{ElementState, MouseScrollDelta, VirtualKeyCode};
 use crate::AbstractKey;
 
 const SAFE_FRAC_PI_2: f32 = FRAC_PI_2 - 0.0001;

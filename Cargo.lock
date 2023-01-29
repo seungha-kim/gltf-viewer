@@ -828,7 +828,6 @@ dependencies = [
  "instant",
  "log",
  "wgpu",
- "winit",
 ]
 
 [[package]]
@@ -862,6 +861,7 @@ dependencies = [
  "log",
  "pollster",
  "tracing-subscriber",
+ "winit",
 ]
 
 [[package]]
