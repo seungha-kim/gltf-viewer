@@ -644,6 +644,7 @@ impl Engine {
     }
 }
 
+#[derive(Debug)]
 pub enum InputEvent {
     KeyPressing(AbstractKey),
     KeyUp(AbstractKey),

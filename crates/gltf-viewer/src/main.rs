@@ -2,10 +2,11 @@
 
 use std::sync::Arc;
 use std::time::Duration;
+use eframe::egui::style::Margin;
 use gltf_engine::{AbstractKey, InputEvent, wgpu};
 use gltf_engine::Engine;
 
-use eframe::egui;
+use eframe::egui::{self, Frame, PointerButton};
 use eframe::egui::{Pos2, Vec2};
 
 fn main() {
@@ -167,12 +168,17 @@ impl MyApp {
 
 impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        ctx.set_visuals(egui::Visuals::light());
         let any_key_pressing = !ctx.input().keys_down.is_empty();
         let mut request_repaint = any_key_pressing;
 
         if ctx.input().keys_down.contains(&egui::Key::Escape) {
             frame.close();
         };
+
+        let mut write_lock = frame.wgpu_render_state().unwrap().renderer.write();
+        let resource = write_lock.paint_callback_resources.get_mut::<PaintResource>().unwrap();
+
         {
             // 조금 더 추상화가 필요하겠네..
             for e in &ctx.input().events {
@@ -197,41 +203,9 @@ impl eframe::App for MyApp {
                     egui::Event::Scroll(vec) => {
                         InputEvent::MouseWheel { delta_x: vec.x, delta_y: vec.y }
                     }
-                    egui::Event::PointerButton {
-                        button, pressed, ..
-                    } => {
-                        if button == &egui::PointerButton::Primary {
-                            if *pressed {
-                                InputEvent::MouseLeftDown
-                            } else {
-                                InputEvent::MouseLeftUp
-                            }
-                        } else {
-                            continue;
-                        }
-                    }
-                    egui::Event::PointerMoved(vec) => {
-                        if let Some(prev_pointer_pos) = self.prev_pointer_pos {
-                            let mut delta = *vec - prev_pointer_pos;
-                            delta *= 0.1;
-                            self.prev_pointer_pos = Some(*vec);
-                            InputEvent::MouseMove { delta_x: delta.x, delta_y: delta.y }
-                        } else {
-                            self.prev_pointer_pos = Some(*vec);
-                            continue
-                        }
-                    }
                     _ => continue,
                 };
                 {
-                    let wgpu_render_state = frame.wgpu_render_state().unwrap();
-                    let mut write_lock = wgpu_render_state
-                        .renderer
-                        .write();
-                    let resource = write_lock
-                        .paint_callback_resources
-                        .get_mut::<PaintResource>()
-                        .unwrap();
                     resource.engine.input(&input_event);
                 }
                 request_repaint = true;
@@ -244,26 +218,66 @@ impl eframe::App for MyApp {
             ctx.request_repaint();
         }
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            egui::ScrollArea::both()
-                .auto_shrink([false; 2])
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 0.0;
-                        ui.label("glTF Viewer - ");
-                        ui.hyperlink_to("Link", "https://github.com/seungha-kim/gltf-viewer");
-                    });
-
-                    egui::Frame::canvas(ui.style()).show(ui, |ui| {
-                        self.custom_painting(ui);
-                    });
-                });
+        let mut top = egui::TopBottomPanel::top("my_panel").show(ctx, |ui| {
+            ui.label("Hello World!");
         });
+
+        egui::TopBottomPanel::bottom("my_bottom_panel").show(ctx, |ui| {
+            ui.label("Hello World!");
+        });
+
+        egui::SidePanel::left("my_left_panel").show(ctx, |ui| {
+            ui.label("Hello World!");
+        });
+
+        egui::SidePanel::right("my_right_panel").show(ctx, |ui| {
+            ui.label("Hello World!");
+        });
+
+        let f = Frame {
+            inner_margin: Margin {
+                left: 0.0,
+                right: 0.0,
+                top: 0.0,
+                bottom: 0.0,
+            },
+            ..Default::default()
+        };
+
+        {
+            egui::CentralPanel::default().frame(f).show(ctx, |ui| {
+                egui::ScrollArea::both()
+                    .auto_shrink([false; 2])
+                    .show(ui, move |ui| {
+                        let mut canvas = egui::Frame::canvas(ui.style()).show(ui, |ui| {
+                            let mut response = self.custom_painting(ui);
+                            'outer: {
+                                if !response.dragged_by(PointerButton::Secondary) {
+                                    break 'outer;
+                                }
+                                let input_event = if response.drag_started() {
+                                    InputEvent::MouseLeftDown
+                                } else if response.dragged() {
+                                    let delta = response.drag_delta() / 2.0;
+                                    InputEvent::MouseMove { delta_x: delta.x, delta_y: delta.y }
+                                } else if response.drag_released() {
+                                    InputEvent::MouseLeftUp
+                                } else {
+                                    break 'outer;
+                                };
+                                {
+                                    resource.engine.input(&input_event);
+                                }
+                            }
+                        });
+                    });
+            });
+        }
     }
 }
 
 impl MyApp {
-    fn custom_painting(&mut self, ui: &mut egui::Ui) {
+    fn custom_painting(&mut self, ui: &mut egui::Ui) -> egui::Response {
         let available = ui.available_rect_before_wrap();
         // TODO: scale factor
         let (rect, response) =
@@ -296,5 +310,7 @@ impl MyApp {
         };
 
         ui.painter().add(callback);
+
+        response
     }
 }
