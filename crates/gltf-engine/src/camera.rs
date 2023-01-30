@@ -117,6 +117,15 @@ impl CameraController {
         }
     }
 
+    pub fn reset_move_amount(&mut self) {
+        self.amount_left = 0.0;
+        self.amount_right = 0.0;
+        self.amount_forward = 0.0;
+        self.amount_backward = 0.0;
+        self.amount_up = 0.0;
+        self.amount_down = 0.0;
+    }
+
     pub fn process_keyboard(&mut self, key: AbstractKey, pressing: bool) -> bool{
         let amount = if pressing { 1.0 } else { 0.0 };
         match key {
@@ -157,10 +166,25 @@ impl CameraController {
         self.scroll = -delta;
     }
 
-    pub fn update_camera(&mut self, camera: &mut Camera, dt: instant::Duration) {
+    pub fn update_direction(&mut self, camera: &mut Camera) {
+        camera.yaw += Rad(self.rotate_horizontal) * self.sensitivity;
+        camera.pitch += Rad(-self.rotate_vertical) * self.sensitivity;
+
+        self.rotate_horizontal = 0.0;
+        self.rotate_vertical = 0.0;
+
+        if camera.pitch < -Rad(SAFE_FRAC_PI_2) {
+            camera.pitch = -Rad(SAFE_FRAC_PI_2);
+        } else if camera.pitch > Rad(SAFE_FRAC_PI_2) {
+            camera.pitch = Rad(SAFE_FRAC_PI_2);
+        }
+    }
+
+    pub fn update_position(&mut self, camera: &mut Camera, dt: instant::Duration) {
         let dt = dt.as_secs_f32();
 
         let (yaw_sin, yaw_cos) = camera.yaw.0.sin_cos();
+
         let forward = Vector3::new(yaw_cos, 0.0, yaw_sin).normalize();
         let right = Vector3::new(-yaw_sin, 0.0, yaw_cos).normalize();
         camera.position += forward * (self.amount_forward - self.amount_backward) * self.speed * dt;
@@ -172,17 +196,5 @@ impl CameraController {
         self.scroll = 0.0;
 
         camera.position.y += (self.amount_up - self.amount_down) * self.speed * dt;
-
-        camera.yaw += Rad(self.rotate_horizontal) * self.sensitivity * dt;
-        camera.pitch += Rad(-self.rotate_vertical) * self.sensitivity * dt;
-
-        self.rotate_horizontal = 0.0;
-        self.rotate_vertical = 0.0;
-
-        if camera.pitch < -Rad(SAFE_FRAC_PI_2) {
-            camera.pitch = -Rad(SAFE_FRAC_PI_2);
-        } else if camera.pitch > Rad(SAFE_FRAC_PI_2) {
-            camera.pitch = Rad(SAFE_FRAC_PI_2);
-        }
     }
 }

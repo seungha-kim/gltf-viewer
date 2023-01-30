@@ -227,6 +227,18 @@ impl<'a> UI<'a> {
                         InputEvent::KeyUp(abstract_key)
                     }
                 }
+                egui::Event::PointerButton {
+                    button, pressed, ..
+                } => {
+                    // NOTE: egui::Response::drag_released 가 항상 false 를 반환하는 문제가 있어서
+                    // 해당 로직만 여기서 처리함
+                    // (macOS 에서 테스트됨)
+                    if button == &egui::PointerButton::Secondary && !*pressed {
+                        InputEvent::MouseRightUp
+                    } else {
+                        continue;
+                    }
+                }
                 egui::Event::Scroll(vec) => {
                     InputEvent::MouseWheel { delta_x: vec.x, delta_y: vec.y }
                 }
@@ -290,18 +302,19 @@ impl<'a> UI<'a> {
             return;
         }
 
-        let input_event = if response.drag_started() {
-            InputEvent::MouseLeftDown
-        } else if response.dragged() {
-            let delta = response.drag_delta() / 2.0;
-            InputEvent::MouseMove { delta_x: delta.x, delta_y: delta.y }
-        } else if response.drag_released() {
-            InputEvent::MouseLeftUp
-        } else {
-            return;
-        };
-
-        self.resource().engine.input(&input_event);
+        if response.drag_started() {
+            self.resource().engine.input(&InputEvent::MouseRightDown);
+        }
+        // NOTE: egui::Response::drag_released 가 항상 false 를 반환하는 문제가 있어서
+        // 해당 로직만 egui::Event::PointerButton 으로 다른 곳에서 처리함
+        // (macOS 에서 테스트됨)
+        // if response.drag_released() {
+        //     self.resource().engine.input(&InputEvent::MouseRightUp);
+        // }
+        if response.dragged() {
+            let delta = response.drag_delta() / 2.0; // FIXME: device pixel ratio?
+            self.resource().engine.input(&InputEvent::MouseMove { delta_x: delta.x, delta_y: delta.y });
+        }
     }
 
     fn custom_painting(&mut self, ui: &mut egui::Ui) -> egui::Response {

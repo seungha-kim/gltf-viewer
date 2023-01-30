@@ -33,57 +33,80 @@ pub use wgpu;
 const ENGINE_COLOR_LABEL: &str = "engine color target";
 const ENGINE_DEPTH_LABEL: &str = "engine depth target";
 
-enum AnimationState {
-    Idle,
-    Animating(AnimationSession)
+struct FlyCamSession {
+    direction_session: Option<FlyDirectionSession>,
 }
 
-impl AnimationState {
-    fn must_be_idle(&self) -> bool {
-        if let AnimationState::Animating(session) = self {
-            if session.pressing_mouse_buttons.is_empty() && session.pressing_keys.is_empty() {
-                return true;
+struct FlyDirectionSession {
+    position_session: Option<FlyPositionSession>,
+}
+
+impl FlyCamSession {
+    fn position_session(&mut self) -> Option<&mut FlyPositionSession> {
+        self.direction_session.as_mut().and_then(|s| s.position_session.as_mut())
+    }
+
+    fn handle_input(&mut self, event: &InputEvent, camera_controller: &mut CameraController) -> bool {
+        match event {
+            InputEvent::MouseRightDown => {
+                self.direction_session = Some(FlyDirectionSession { position_session: None });
+            }
+            InputEvent::MouseRightUp => {
+                self.direction_session = None;
+                camera_controller.reset_move_amount();
+            }
+            InputEvent::MouseMove { delta_x, delta_y } if self.direction_session.is_some() => {
+                camera_controller.process_mouse(*delta_x, *delta_y);
+            }
+            InputEvent::MouseWheel { delta_y, .. } => {
+                camera_controller.process_scroll(*delta_y);
+            }
+            InputEvent::KeyPressing(key) if self.direction_session.is_some() => {
+                let session = self.direction_session.as_mut().unwrap();
+                if session.position_session.is_none() {
+                    session.position_session = Some(Default::default());
+                }
+                let position_session = session.position_session.as_mut().unwrap();
+                position_session.pressing_keys.insert(*key);
+                camera_controller.process_keyboard(*key, true);
+            }
+            InputEvent::KeyUp(key) if self.position_session().is_some() => {
+                let should_finish = {
+                    let position_session = self.position_session().unwrap();
+                    position_session.pressing_keys.remove(key);
+                    camera_controller.process_keyboard(*key, false);
+                    position_session.pressing_keys.is_empty()
+                };
+                if should_finish {
+                    self.direction_session.as_mut().unwrap().position_session = None;
+                }
+            }
+            _ => {
+                return false;
             }
         }
-        false
-    }
-
-    fn animation_session(&self) -> Option<&AnimationSession> {
-        match self {
-            AnimationState::Idle => None,
-            AnimationState::Animating(session) => Some(session),
-        }
+        true
     }
 }
 
-struct AnimationSession {
+struct FlyPositionSession {
     pressing_keys: HashSet<AbstractKey>,
-    pressing_mouse_buttons: HashSet<AbstractMouseButton>,
-    // TODO: 키보드/마우스 인터랙션이 시간을 공유하다 보니까, 마우스 버튼을 누르고 있는 상태에서 키보드로 움직였다 멈췄다 하면 문제가 생김
-    // TODO: 키보드/마우스 인터랙션 세션 데이터를 각각 관리해야 할듯
-    prev_time: Option<instant::Instant>,
+    prev_time: instant::Instant,
     now: instant::Instant,
 }
 
-impl AnimationSession {
-    fn is_rotating_using_mouse(&self) -> bool {
-        self.pressing_mouse_buttons.contains(&AbstractMouseButton::Primary)
-    }
-}
-
-impl Default for AnimationSession {
+impl Default for FlyPositionSession {
     fn default() -> Self {
         Self {
             pressing_keys: HashSet::new(),
-            pressing_mouse_buttons: HashSet::new(),
-            prev_time: None,
+            prev_time: instant::Instant::now(),
             now: instant::Instant::now(),
         }
     }
 }
 
 pub struct Engine {
-    animation_state: AnimationState,
+    fly_cam_session: FlyCamSession,
 
     target_width: u32,
     target_height: u32,
@@ -112,9 +135,6 @@ pub struct Engine {
     camera_uniform: CameraUniform,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
-
-    // UI state
-    mouse_pressed: bool,
 
     // etc
     #[allow(dead_code)]
@@ -304,7 +324,7 @@ impl Engine {
 
         let camera = camera::Camera::new((0.0, 5.0, 10.0), cgmath::Deg(-90.0), cgmath::Deg(-20.0));
         let projection = camera::Projection::new(width, height, cgmath::Deg(45.0), 0.1, 100.0);
-        let camera_controller = camera::CameraController::new(4.0, 0.4);
+        let camera_controller = camera::CameraController::new(4.0, 0.01);
 
         let mut camera_uniform = CameraUniform::new();
         camera_uniform.update_view_proj(&camera, &projection);
@@ -409,7 +429,7 @@ impl Engine {
         });
 
         Self {
-            animation_state: AnimationState::Idle,
+            fly_cam_session: FlyCamSession { direction_session: None },
             target_width: width,
             target_height: height,
             render_pipeline,
@@ -420,7 +440,6 @@ impl Engine {
             camera_uniform,
             camera_buffer,
             camera_bind_group,
-            mouse_pressed: false,
             camera_bind_group_layout,
             node_bind_group_layout,
             material_bind_group_layout,
@@ -445,81 +464,18 @@ impl Engine {
 
     // TODO: eframe 대응
     pub fn input(&mut self, event: &InputEvent) -> bool {
-        match (event, &mut self.animation_state) {
-            (InputEvent::MouseLeftDown, AnimationState::Idle) => {
-                let mut session = AnimationSession::default();
-                session.pressing_mouse_buttons.insert(AbstractMouseButton::Primary);
-                self.animation_state = AnimationState::Animating(session);
-            }
-            (InputEvent::MouseLeftDown, AnimationState::Animating(session)) => {
-                session.pressing_mouse_buttons.insert(AbstractMouseButton::Primary);
-            }
-            (InputEvent::MouseLeftUp, AnimationState::Animating(session)) => {
-                session.pressing_mouse_buttons.remove(&AbstractMouseButton::Primary);
-            }
-            (InputEvent::KeyPressing(key), AnimationState::Idle) => {
-                let mut session = AnimationSession::default();
-                session.pressing_keys.insert(*key);
-                self.animation_state = AnimationState::Animating(session);
-            }
-            (InputEvent::KeyPressing(key), AnimationState::Animating(session)) => {
-                session.pressing_keys.insert(*key);
-            }
-            (InputEvent::KeyUp(key), AnimationState::Animating(session)) => {
-                session.pressing_keys.remove(key);
-            }
-            _ => {}
-        }
-
-        if self.animation_state.must_be_idle() {
-            self.animation_state = AnimationState::Idle;
-        }
-
-        match event {
-            InputEvent::KeyPressing(key) => self.camera_controller.process_keyboard(*key, true),
-            InputEvent::KeyUp(key) => self.camera_controller.process_keyboard(*key, false),
-            InputEvent::MouseWheel { delta_y, .. } => {
-                self.camera_controller.process_scroll(*delta_y);
-                true
-            }
-            InputEvent::MouseLeftDown => {
-                self.mouse_pressed = true;
-                true
-            }
-            InputEvent::MouseLeftUp => {
-                self.mouse_pressed = false;
-                true
-            }
-            InputEvent::MouseMove { delta_x, delta_y } => {
-                if self.animation_state.animation_session().map(|s| s.is_rotating_using_mouse()).unwrap_or(false) {
-                    self.camera_controller.process_mouse(*delta_x, *delta_y);
-                    true
-                } else {
-                    false
-                }
-            }
-            _ => false,
-        }
+        self.fly_cam_session.handle_input(event, &mut self.camera_controller)
     }
 
     pub fn update(&mut self, queue: &wgpu::Queue) {
-        if let AnimationState::Animating(session) = &mut self.animation_state {
-            session.prev_time = Some(session.now);
+        self.camera_controller.update_direction(&mut self.camera);
+        if let Some(session) = self.fly_cam_session.position_session() {
+            session.prev_time = session.now;
             session.now = instant::Instant::now();
+            let dt = session.now - session.prev_time;
+            self.camera_controller.update_position(&mut self.camera, dt);
         }
 
-        let dt = match &self.animation_state {
-            AnimationState::Idle
-            | AnimationState::Animating(AnimationSession { prev_time: None, .. }) => instant::Duration::ZERO,
-            AnimationState::Animating(
-            AnimationSession {prev_time: Some(prev_time), now, ..})=> {
-                *now - *prev_time
-            }
-        };
-
-        // if animating, request repaint next frame
-
-        self.camera_controller.update_camera(&mut self.camera, dt);
         self.camera_uniform.update_view_proj(&self.camera, &self.projection);
 
         queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&[self.camera_uniform]));
@@ -631,10 +587,6 @@ impl Engine {
         // unimplemented!();
     }
 
-    pub fn mouse_pressed(&self) -> bool {
-        self.mouse_pressed
-    }
-
     pub fn camera_controller_mut(&mut self) -> &mut CameraController {
         &mut self.camera_controller
     }
@@ -649,8 +601,8 @@ pub enum InputEvent {
     KeyPressing(AbstractKey),
     KeyUp(AbstractKey),
     MouseWheel { delta_x: f32, delta_y: f32 },
-    MouseLeftDown,
-    MouseLeftUp,
+    MouseRightDown,
+    MouseRightUp,
     MouseMove { delta_x: f32, delta_y: f32 },
 }
 
