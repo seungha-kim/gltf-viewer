@@ -859,6 +859,7 @@ dependencies = [
  "gltf-engine",
  "instant",
  "log",
+ "parking_lot",
  "pollster",
  "tracing-subscriber",
  "winit",

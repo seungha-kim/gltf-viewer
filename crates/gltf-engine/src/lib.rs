@@ -66,7 +66,7 @@ struct AnimationSession {
 }
 
 impl AnimationSession {
-    fn is_rotating_usnig_mouse(&self) -> bool {
+    fn is_rotating_using_mouse(&self) -> bool {
         self.pressing_mouse_buttons.contains(&AbstractMouseButton::Primary)
     }
 }
@@ -491,7 +491,7 @@ impl Engine {
                 true
             }
             InputEvent::MouseMove { delta_x, delta_y } => {
-                if self.animation_state.animation_session().map(|s| s.is_rotating_usnig_mouse()).unwrap_or(false) {
+                if self.animation_state.animation_session().map(|s| s.is_rotating_using_mouse()).unwrap_or(false) {
                     self.camera_controller.process_mouse(*delta_x, *delta_y);
                     true
                 } else {

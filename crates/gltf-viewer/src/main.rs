@@ -6,7 +6,7 @@ use eframe::egui::style::Margin;
 use gltf_engine::{AbstractKey, InputEvent, wgpu};
 use gltf_engine::Engine;
 
-use eframe::egui::{self, Frame, PointerButton};
+use eframe::egui;
 use eframe::egui::{Pos2, Vec2};
 
 fn main() {
@@ -165,76 +165,105 @@ impl MyApp {
     }
 }
 
+struct UI<'a> {
+    ctx: &'a egui::Context,
+    write_lock: parking_lot::MappedRwLockWriteGuard<'a, egui_wgpu::Renderer>,
+    should_close: bool,
+    request_repaint: bool,
+}
 
-impl eframe::App for MyApp {
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        ctx.set_visuals(egui::Visuals::light());
-        let any_key_pressing = !ctx.input().keys_down.is_empty();
-        let mut request_repaint = any_key_pressing;
+impl<'a> UI<'a> {
+    fn new(ctx: &'a egui::Context, frame: &'a mut eframe::Frame) -> Self {
+        Self {
+            ctx,
+            write_lock: frame.wgpu_render_state().unwrap().renderer.write(),
+            should_close: false,
+            request_repaint: false,
+        }
+    }
 
-        if ctx.input().keys_down.contains(&egui::Key::Escape) {
-            frame.close();
+    fn resource(&mut self) -> &mut PaintResource {
+        self.write_lock.paint_callback_resources.get_mut::<PaintResource>().unwrap()
+    }
+
+    fn update(&mut self) {
+        self.setup();
+        self.handle_input_events();
+        self.top_panel();
+        self.bottom_panel();
+        self.left_panel();
+        self.right_panel();
+        self.central_panel();
+    }
+
+    fn setup(&mut self) {
+        self.ctx.set_visuals(egui::Visuals::light());
+        if !self.ctx.input().keys_down.is_empty() {
+            self.ctx.request_repaint();
+        }
+
+        if self.ctx.input().keys_down.contains(&egui::Key::Escape) {
+            self.should_close = true;
         };
+    }
 
-        let mut write_lock = frame.wgpu_render_state().unwrap().renderer.write();
-        let resource = write_lock.paint_callback_resources.get_mut::<PaintResource>().unwrap();
-
-        {
-            // 조금 더 추상화가 필요하겠네..
-            for e in &ctx.input().events {
-                log::info!("MyApp event: {:?}", e);
-                let input_event = match e {
-                    egui::Event::Key { key, pressed, .. } => {
-                        let abstract_key = match key {
-                            egui::Key::ArrowUp | egui::Key::W => AbstractKey::CameraMoveForward,
-                            egui::Key::ArrowDown | egui::Key::S => AbstractKey::CameraMoveBackward,
-                            egui::Key::ArrowLeft | egui::Key::A => AbstractKey::CameraMoveLeft,
-                            egui::Key::ArrowRight | egui::Key::D => AbstractKey::CameraMoveRight,
-                            egui::Key::Q => AbstractKey::CameraMoveDown,
-                            egui::Key::E => AbstractKey::CameraMoveUp,
-                            _ => continue,
-                        };
-                        if *pressed {
-                            InputEvent::KeyPressing(abstract_key)
-                        } else {
-                            InputEvent::KeyUp(abstract_key)
-                        }
+    fn handle_input_events(&mut self) {
+        for e in &self.ctx.input().events {
+            log::info!("MyApp event: {:?}", e);
+            let input_event = match e {
+                egui::Event::Key { key, pressed, .. } => {
+                    let abstract_key = match key {
+                        egui::Key::ArrowUp | egui::Key::W => AbstractKey::CameraMoveForward,
+                        egui::Key::ArrowDown | egui::Key::S => AbstractKey::CameraMoveBackward,
+                        egui::Key::ArrowLeft | egui::Key::A => AbstractKey::CameraMoveLeft,
+                        egui::Key::ArrowRight | egui::Key::D => AbstractKey::CameraMoveRight,
+                        egui::Key::Q => AbstractKey::CameraMoveDown,
+                        egui::Key::E => AbstractKey::CameraMoveUp,
+                        _ => continue,
+                    };
+                    if *pressed {
+                        InputEvent::KeyPressing(abstract_key)
+                    } else {
+                        InputEvent::KeyUp(abstract_key)
                     }
-                    egui::Event::Scroll(vec) => {
-                        InputEvent::MouseWheel { delta_x: vec.x, delta_y: vec.y }
-                    }
-                    _ => continue,
-                };
-                {
-                    resource.engine.input(&input_event);
                 }
-                request_repaint = true;
+                egui::Event::Scroll(vec) => {
+                    InputEvent::MouseWheel { delta_x: vec.x, delta_y: vec.y }
+                }
+                _ => continue,
+            };
+            {
+                self.resource().engine.input(&input_event);
             }
         }
+    }
 
-        // ctx.request_repaint 가 write lock 을 필요로 하기 때문에,
-        // 다른 lock 이 걸려있지 않은 순간에 호출해야 함
-        if request_repaint {
-            ctx.request_repaint();
-        }
-
-        let mut top = egui::TopBottomPanel::top("my_panel").show(ctx, |ui| {
+    fn top_panel(&mut self) {
+        egui::TopBottomPanel::top("my_panel").show(self.ctx, |ui| {
             ui.label("Hello World!");
         });
+    }
 
-        egui::TopBottomPanel::bottom("my_bottom_panel").show(ctx, |ui| {
+    fn bottom_panel(&mut self) {
+        egui::TopBottomPanel::bottom("my_bottom_panel").show(self.ctx, |ui| {
             ui.label("Hello World!");
         });
+    }
 
-        egui::SidePanel::left("my_left_panel").show(ctx, |ui| {
+    fn left_panel(&mut self) {
+        egui::SidePanel::left("my_left_panel").show(self.ctx, |ui| {
             ui.label("Hello World!");
         });
+    }
 
-        egui::SidePanel::right("my_right_panel").show(ctx, |ui| {
+    fn right_panel(&mut self) {
+        egui::SidePanel::right("my_right_panel").show(self.ctx, |ui| {
             ui.label("Hello World!");
         });
+    }
 
-        let f = Frame {
+    fn central_panel(&mut self) {
+        let f = egui::Frame {
             inner_margin: Margin {
                 left: 0.0,
                 right: 0.0,
@@ -244,39 +273,37 @@ impl eframe::App for MyApp {
             ..Default::default()
         };
 
-        {
-            egui::CentralPanel::default().frame(f).show(ctx, |ui| {
-                egui::ScrollArea::both()
-                    .auto_shrink([false; 2])
-                    .show(ui, move |ui| {
-                        let mut canvas = egui::Frame::canvas(ui.style()).show(ui, |ui| {
-                            let mut response = self.custom_painting(ui);
-                            'outer: {
-                                if !response.dragged_by(PointerButton::Secondary) {
-                                    break 'outer;
-                                }
-                                let input_event = if response.drag_started() {
-                                    InputEvent::MouseLeftDown
-                                } else if response.dragged() {
-                                    let delta = response.drag_delta() / 2.0;
-                                    InputEvent::MouseMove { delta_x: delta.x, delta_y: delta.y }
-                                } else if response.drag_released() {
-                                    InputEvent::MouseLeftUp
-                                } else {
-                                    break 'outer;
-                                };
-                                {
-                                    resource.engine.input(&input_event);
-                                }
-                            }
-                        });
+        egui::CentralPanel::default().frame(f).show(self.ctx, |ui| {
+            egui::ScrollArea::both()
+                .auto_shrink([false; 2])
+                .show(ui, move |ui| {
+                    egui::Frame::canvas(ui.style()).show(ui, |ui| {
+                        let response = self.custom_painting(ui);
+                        self.handle_central_panel_drag(response);
                     });
-            });
-        }
+                });
+        });
     }
-}
 
-impl MyApp {
+    fn handle_central_panel_drag(&mut self, response: egui::Response) {
+        if !response.dragged_by(egui::PointerButton::Secondary) {
+            return;
+        }
+
+        let input_event = if response.drag_started() {
+            InputEvent::MouseLeftDown
+        } else if response.dragged() {
+            let delta = response.drag_delta() / 2.0;
+            InputEvent::MouseMove { delta_x: delta.x, delta_y: delta.y }
+        } else if response.drag_released() {
+            InputEvent::MouseLeftUp
+        } else {
+            return;
+        };
+
+        self.resource().engine.input(&input_event);
+    }
+
     fn custom_painting(&mut self, ui: &mut egui::Ui) -> egui::Response {
         let available = ui.available_rect_before_wrap();
         // TODO: scale factor
@@ -312,5 +339,19 @@ impl MyApp {
         ui.painter().add(callback);
 
         response
+    }
+}
+
+
+impl eframe::App for MyApp {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        let (should_close, request_repaint) = {
+            let mut ui = UI::new(ctx, frame);
+            ui.update();
+            (ui.should_close, ui.request_repaint)
+        };
+        if should_close {
+            frame.close();
+        }
     }
 }
