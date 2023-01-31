@@ -1,5 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
+mod todo_list;
+
 use std::sync::Arc;
 use std::time::Duration;
 use eframe::egui::style::Margin;
@@ -8,6 +10,7 @@ use gltf_engine::Engine;
 
 use eframe::egui;
 use eframe::egui::{Pos2, Vec2};
+use crate::todo_list::{TodoList, TodoListContext, TodoListViewState};
 
 fn main() {
     // Log to stdout (if you run with `RUST_LOG=debug`).
@@ -142,6 +145,8 @@ impl PaintResource {
 
 struct MyApp {
     prev_pointer_pos: Option<Pos2>,
+    todo_list: TodoList,
+    todo_list_view_state: TodoListViewState,
 }
 
 impl MyApp {
@@ -161,31 +166,52 @@ impl MyApp {
 
         Some(MyApp {
             prev_pointer_pos: None,
+            todo_list: TodoList::new(),
+            todo_list_view_state: TodoListViewState::new(),
         })
     }
 }
 
-struct UI<'a> {
-    ctx: &'a egui::Context,
-    write_lock: parking_lot::MappedRwLockWriteGuard<'a, egui_wgpu::Renderer>,
+struct MyAppContext<'a> {
+    egui_ctx: &'a egui::Context,
+    app: &'a mut MyApp,
+    engine: &'a mut Engine,
     should_close: bool,
     request_repaint: bool,
 }
 
-impl<'a> UI<'a> {
-    fn new(ctx: &'a egui::Context, frame: &'a mut eframe::Frame) -> Self {
-        Self {
-            ctx,
-            write_lock: frame.wgpu_render_state().unwrap().renderer.write(),
-            should_close: false,
-            request_repaint: false,
+impl eframe::App for MyApp {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+
+        let (should_close, request_repaint) = {
+            let mut write_lock = frame.wgpu_render_state().unwrap().renderer.write();
+            let paint_resource = write_lock.paint_callback_resources.get_mut::<PaintResource>().unwrap();
+            let engine = &mut paint_resource.engine;
+
+            let mut my_app_ctx = MyAppContext {
+                egui_ctx: ctx,
+                app: self,
+                engine,
+                should_close: false,
+                request_repaint: false,
+            };
+
+            my_app_ctx.update();
+
+            (my_app_ctx.should_close, my_app_ctx.request_repaint)
+        };
+
+        if should_close {
+            frame.close();
+        }
+
+        if request_repaint {
+            ctx.request_repaint();
         }
     }
+}
 
-    fn resource(&mut self) -> &mut PaintResource {
-        self.write_lock.paint_callback_resources.get_mut::<PaintResource>().unwrap()
-    }
-
+impl<'a> MyAppContext<'a> {
     fn update(&mut self) {
         self.setup();
         self.handle_input_events();
@@ -197,19 +223,19 @@ impl<'a> UI<'a> {
     }
 
     fn setup(&mut self) {
-        self.ctx.set_visuals(egui::Visuals::light());
-        if !self.ctx.input().keys_down.is_empty() {
-            self.ctx.request_repaint();
+        self.egui_ctx.set_visuals(egui::Visuals::light());
+        if !self.egui_ctx.input().keys_down.is_empty() {
+            self.egui_ctx.request_repaint();
         }
 
-        if self.ctx.input().keys_down.contains(&egui::Key::Escape) {
+        if self.egui_ctx.input().keys_down.contains(&egui::Key::Escape) {
             self.should_close = true;
         };
     }
 
     fn handle_input_events(&mut self) {
-        for e in &self.ctx.input().events {
-            log::info!("MyApp event: {:?}", e);
+        for e in &self.egui_ctx.input().events {
+            log::debug!("MyApp event: {:?}", e);
             let input_event = match e {
                 egui::Event::Key { key, pressed, .. } => {
                     let abstract_key = match key {
@@ -245,32 +271,41 @@ impl<'a> UI<'a> {
                 _ => continue,
             };
             {
-                self.resource().engine.input(&input_event);
+                self.engine.input(&input_event);
             }
         }
     }
 
     fn top_panel(&mut self) {
-        egui::TopBottomPanel::top("my_panel").show(self.ctx, |ui| {
+        egui::TopBottomPanel::top("my_panel").show(self.egui_ctx, |ui| {
             ui.label("Hello World!");
         });
     }
 
     fn bottom_panel(&mut self) {
-        egui::TopBottomPanel::bottom("my_bottom_panel").show(self.ctx, |ui| {
+        egui::TopBottomPanel::bottom("my_bottom_panel").show(self.egui_ctx, |ui| {
             ui.label("Hello World!");
         });
     }
 
     fn left_panel(&mut self) {
-        egui::SidePanel::left("my_left_panel").show(self.ctx, |ui| {
+        egui::SidePanel::left("my_left_panel").show(self.egui_ctx, |ui| {
             ui.label("Hello World!");
         });
     }
 
     fn right_panel(&mut self) {
-        egui::SidePanel::right("my_right_panel").show(self.ctx, |ui| {
-            ui.label("Hello World!");
+        egui::SidePanel::right("my_right_panel").show(self.egui_ctx, |ui| {
+            ui.set_width(200.0);
+
+            let mut ctx = TodoListContext {
+                egui_ctx: self.egui_ctx,
+                todo_list: &mut self.app.todo_list,
+                view_state: &mut self.app.todo_list_view_state,
+                ui,
+            };
+
+            ctx.update();
         });
     }
 
@@ -285,7 +320,7 @@ impl<'a> UI<'a> {
             ..Default::default()
         };
 
-        egui::CentralPanel::default().frame(f).show(self.ctx, |ui| {
+        egui::CentralPanel::default().frame(f).show(self.egui_ctx, |ui| {
             egui::ScrollArea::both()
                 .auto_shrink([false; 2])
                 .show(ui, move |ui| {
@@ -303,7 +338,7 @@ impl<'a> UI<'a> {
         }
 
         if response.drag_started() {
-            self.resource().engine.input(&InputEvent::MouseRightDown);
+            self.engine.input(&InputEvent::MouseRightDown);
         }
         // NOTE: egui::Response::drag_released 가 항상 false 를 반환하는 문제가 있어서
         // 해당 로직만 egui::Event::PointerButton 으로 다른 곳에서 처리함
@@ -313,7 +348,7 @@ impl<'a> UI<'a> {
         // }
         if response.dragged() {
             let delta = response.drag_delta() / 2.0; // FIXME: device pixel ratio?
-            self.resource().engine.input(&InputEvent::MouseMove { delta_x: delta.x, delta_y: delta.y });
+            self.engine.input(&InputEvent::MouseMove { delta_x: delta.x, delta_y: delta.y });
         }
     }
 
@@ -352,19 +387,5 @@ impl<'a> UI<'a> {
         ui.painter().add(callback);
 
         response
-    }
-}
-
-
-impl eframe::App for MyApp {
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        let (should_close, request_repaint) = {
-            let mut ui = UI::new(ctx, frame);
-            ui.update();
-            (ui.should_close, ui.request_repaint)
-        };
-        if should_close {
-            frame.close();
-        }
     }
 }
