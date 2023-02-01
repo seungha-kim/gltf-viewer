@@ -32,7 +32,20 @@ pub struct TodoList {
 
 impl TodoList {
     pub fn new() -> Self {
-        Self { items: Vec::new() }
+        Self { items: vec![
+            TodoItem {
+                title: "egui Basics".into(),
+                completed: true,
+            },
+            TodoItem {
+                title: "egui Intermediate".into(),
+                completed: false,
+            },
+            TodoItem {
+                title: "egui Complex Application".into(),
+                completed: false,
+            },
+        ] }
     }
 }
 
