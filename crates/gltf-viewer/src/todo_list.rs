@@ -76,13 +76,14 @@ impl<'a> TodoListContext<'a> {
     }
 
     fn todo_list(&mut self) {
-        // Props
+        // Computed values
         let current_editing_index = self.view_state.edit_state.as_ref().map(|s| s.item_index);
 
         // Command variable
         let mut to_be_edited: Option<usize> = None;
         let mut to_be_commited = false;
         let mut to_be_focused: Option<Response> = None;
+        let mut to_be_deleted: Option<usize> = None;
 
         // Interaction
         for (index, item) in self.todo_list.items.iter_mut().enumerate() {
@@ -90,7 +91,7 @@ impl<'a> TodoListContext<'a> {
             // 그렇지 않으면, UI가 순간적으로 뒤바뀌거나 깜빡이는 현상이 나타날 수 있음
             // - 모든 UI 가 그려지고 난 다음에 mutation 이 이루어져야 하므로,
             //   command 를 남겨서 나중에 따로 mutation 을 할 수 있게 설계한다.
-            // - 다른 요소들에 대한 mutation 을 실수로 하는 것을 막기 위해, 
+            // - 다른 요소들에 대한 mutation 을 실수로 하는 것을 막기 위해,
             //   위처럼 상태에 대한 exclusive reference 를 걸어두는 것도 좋은 방법.
             let (
                 _checkbox,
@@ -98,14 +99,22 @@ impl<'a> TodoListContext<'a> {
             ) = self.ui.horizontal(|ui| {
                 (
                     ui.checkbox(&mut item.completed, ""),
-                    if current_editing_index.map(|i| i == index).unwrap_or(false) {
-                        {
+                    match current_editing_index {
+                        Some(i) if i == index => {
                             let edit_state = self.view_state.edit_state.as_mut().unwrap();
                             ui.text_edit_singleline(&mut edit_state.text_for_edit)
                         }
-                    } else {
-                        ui.add(egui::widgets::Label::new(&item.title).wrap(true))
-                    },
+                        _ => ui.add(egui::widgets::Label::new(&item.title).wrap(true)).context_menu(|ui| {
+                            if ui.button("Edit").clicked() {
+                                to_be_edited = Some(index);
+                                ui.close_menu();
+                            }
+                            if ui.button("Delete").clicked() {
+                                to_be_deleted = Some(index);
+                                ui.close_menu();
+                            }
+                        })
+                    }
                 )
             }).inner;
 
@@ -139,6 +148,11 @@ impl<'a> TodoListContext<'a> {
         } else if to_be_commited {
             self.commit_editing_item();
         }
+
+        if let Some(index) = to_be_deleted {
+            self.commit_editing_item();
+            self.todo_list.items.remove(index);
+        }
     }
 
     fn commit_new_item(&mut self) {
@@ -154,8 +168,8 @@ impl<'a> TodoListContext<'a> {
     }
 
     fn commit_editing_item(&mut self) {
-        let edit_state = self.view_state.edit_state.take().unwrap();
-        self.todo_list.items[edit_state.item_index].title = edit_state.text_for_edit;
+        let Some(edit_state) = self.view_state.edit_state.take() else { return; };
+        self.todo_list.items[edit_state.item_index].title = edit_state.text_for_edit.clone();
     }
 
     fn request_focus_if_needed(&mut self, index: usize, res: &Response) {
