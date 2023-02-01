@@ -64,7 +64,7 @@ impl<'a> TodoListContext<'a> {
             })
             .inner;
 
-        if self.enter_pressed(&text_edit) {
+        if Self::enter_pressed(&text_edit, self.egui_ctx) {
             self.commit_new_item();
             text_edit.request_focus();
         }
@@ -77,18 +77,28 @@ impl<'a> TodoListContext<'a> {
 
     fn todo_list(&mut self) {
         // Props
-        let editing_index = self.view_state.edit_state.as_ref().map(|s| s.item_index);
+        let current_editing_index = self.view_state.edit_state.as_ref().map(|s| s.item_index);
 
-        for index in 0..self.todo_list.items.len() {
-            // Render
+        // Command variable
+        let mut to_be_edited: Option<usize> = None;
+        let mut to_be_commited = false;
+        let mut to_be_focused: Option<Response> = None;
+
+        // Interaction
+        for (index, item) in self.todo_list.items.iter_mut().enumerate() {
+            // NOTE: 루프 안에서는 다른 요소들이 그려지는 데 부작용을 일으킬 수 있는 작업을 피해야 한다
+            // 그렇지 않으면, UI가 순간적으로 뒤바뀌거나 깜빡이는 현상이 나타날 수 있음
+            // - 모든 UI 가 그려지고 난 다음에 mutation 이 이루어져야 하므로,
+            //   command 를 남겨서 나중에 따로 mutation 을 할 수 있게 설계한다.
+            // - 다른 요소들에 대한 mutation 을 실수로 하는 것을 막기 위해, 
+            //   위처럼 상태에 대한 exclusive reference 를 걸어두는 것도 좋은 방법.
             let (
                 _checkbox,
                 text_widget,
             ) = self.ui.horizontal(|ui| {
-                let item = &mut self.todo_list.items[index];
                 (
                     ui.checkbox(&mut item.completed, ""),
-                    if editing_index.map(|i| i == index).unwrap_or(false) {
+                    if current_editing_index.map(|i| i == index).unwrap_or(false) {
                         {
                             let edit_state = self.view_state.edit_state.as_mut().unwrap();
                             ui.text_edit_singleline(&mut edit_state.text_for_edit)
@@ -99,20 +109,35 @@ impl<'a> TodoListContext<'a> {
                 )
             }).inner;
 
-            // Mutate
             let text_res = text_widget.interact(Sense::click());
 
-            self.request_focus_if_needed(index, &text_res);
-
-            let non_editing_item_clicked = editing_index.map(|i| i != index).unwrap_or(true) && text_res.clicked();
-            let editing_item_enter_pressed = editing_index.map(|i| i == index).unwrap_or(false) && self.enter_pressed(&text_res);
-            let clicked_elsewhere_in_editing = editing_index.is_some() && text_res.clicked_elsewhere();
+            // Command
+            let is_editing = current_editing_index.map(|i| i == index).unwrap_or(false);
+            let non_editing_item_clicked = !is_editing && text_res.clicked();
+            let editing_item_enter_pressed = is_editing && Self::enter_pressed(&text_res, &self.egui_ctx);
+            let clicked_elsewhere_in_editing = is_editing && text_res.clicked_elsewhere();
 
             if non_editing_item_clicked {
-                self.view_state.edit_state = Some(self.edit_state(index));
+                to_be_edited = Some(index);
             } else if editing_item_enter_pressed || clicked_elsewhere_in_editing {
-                self.commit_editing_item();
+                to_be_commited = true;
             }
+
+            if is_editing && self.view_state.edit_state.as_ref().map(|s| s.request_focus).unwrap_or(false) {
+                to_be_focused = Some(text_res.clone());
+            }
+        }
+
+        // Mutation
+        if let (Some(res), Some(edit_state)) = (to_be_focused, self.view_state.edit_state.as_mut()) {
+            res.request_focus();
+            edit_state.request_focus = false;
+        }
+
+        if let Some(index) = to_be_edited {
+            self.view_state.edit_state = Some(self.edit_state(index));
+        } else if to_be_commited {
+            self.commit_editing_item();
         }
     }
 
@@ -150,7 +175,7 @@ impl<'a> TodoListContext<'a> {
         }
     }
 
-    fn enter_pressed(&self, res: &Response) -> bool {
-        res.lost_focus() && self.egui_ctx.input().key_pressed(Key::Enter)
+    fn enter_pressed(res: &Response, egui_ctx: &egui::Context) -> bool {
+        res.lost_focus() && egui_ctx.input().key_pressed(Key::Enter)
     }
 }
