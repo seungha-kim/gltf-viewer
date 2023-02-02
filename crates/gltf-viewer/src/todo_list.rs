@@ -97,21 +97,27 @@ impl<'a> TodoListContext<'a> {
         let mut to_be_commited = false;
         let mut to_be_focused: Option<Response> = None;
         let mut to_be_deleted: Option<usize> = None;
+        let mut to_be_toggled: Option<usize> = None;
+
+        // TODO: https://github.com/lucasmerlin/egui_dnd
 
         // Interaction
-        for (index, item) in self.todo_list.items.iter_mut().enumerate() {
+        for (index, item) in self.todo_list.items.iter().enumerate() {
             // NOTE: 루프 안에서는 다른 요소들이 그려지는 데 부작용을 일으킬 수 있는 작업을 피해야 한다
             // 그렇지 않으면, UI가 순간적으로 뒤바뀌거나 깜빡이는 현상이 나타날 수 있음
             // - 모든 UI 가 그려지고 난 다음에 mutation 이 이루어져야 하므로,
             //   command 를 남겨서 나중에 따로 mutation 을 할 수 있게 설계한다.
             // - 다른 요소들에 대한 mutation 을 실수로 하는 것을 막기 위해,
             //   위처럼 상태에 대한 exclusive reference 를 걸어두는 것도 좋은 방법.
+
+            let mut completed = item.completed;
+
             let (
-                _checkbox,
+                checkbox,
                 text_widget,
             ) = self.ui.horizontal(|ui| {
                 (
-                    ui.checkbox(&mut item.completed, ""),
+                    ui.checkbox(&mut completed, ""),
                     match current_editing_index {
                         Some(i) if i == index => {
                             let edit_state = self.view_state.edit_state.as_mut().unwrap();
@@ -139,6 +145,10 @@ impl<'a> TodoListContext<'a> {
             let editing_item_enter_pressed = is_editing && Self::enter_pressed(&text_res, &self.egui_ctx);
             let clicked_elsewhere_in_editing = is_editing && text_res.clicked_elsewhere();
 
+            if checkbox.changed() {
+                to_be_toggled = Some(index);
+            }
+
             if non_editing_item_clicked {
                 to_be_edited = Some(index);
             } else if editing_item_enter_pressed || clicked_elsewhere_in_editing {
@@ -165,6 +175,11 @@ impl<'a> TodoListContext<'a> {
         if let Some(index) = to_be_deleted {
             self.commit_editing_item();
             self.todo_list.items.remove(index);
+        }
+
+        if let Some(index) = to_be_toggled {
+            let completed = &mut self.todo_list.items[index].completed;
+            *completed = !*completed;
         }
     }
 
