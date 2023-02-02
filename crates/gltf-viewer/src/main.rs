@@ -1,6 +1,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
-mod todo_list;
+mod ui;
+mod model;
+mod command;
+mod undo_manager;
+mod global_event;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -10,7 +14,10 @@ use gltf_engine::Engine;
 
 use eframe::egui;
 use eframe::egui::{Pos2, Vec2};
-use crate::todo_list::{TodoList, TodoListContext, TodoListViewState};
+use crate::global_event::GlobalEvent;
+use crate::model::Model;
+use crate::ui::component::{Component, ComponentContext};
+use crate::undo_manager::UndoManager;
 
 fn main() {
     // Log to stdout (if you run with `RUST_LOG=debug`).
@@ -145,8 +152,9 @@ impl PaintResource {
 
 struct MyApp {
     prev_pointer_pos: Option<Pos2>,
-    todo_list: TodoList,
-    todo_list_view_state: TodoListViewState,
+    todo_list_component: Component,
+    undo_manager: UndoManager,
+    model: Model,
 }
 
 impl MyApp {
@@ -166,8 +174,9 @@ impl MyApp {
 
         Some(MyApp {
             prev_pointer_pos: None,
-            todo_list: TodoList::new(),
-            todo_list_view_state: TodoListViewState::new(),
+            todo_list_component: Component::new(),
+            undo_manager: UndoManager::new(),
+            model: Default::default(),
         })
     }
 }
@@ -178,6 +187,9 @@ struct MyAppContext<'a> {
     engine: &'a mut Engine,
     should_close: bool,
     request_repaint: bool,
+    // model: &'a mut Model,
+    // undo_manager: &'a mut UndoManager,
+    // todo_list_component: &'a mut Component,
 }
 
 impl eframe::App for MyApp {
@@ -298,14 +310,33 @@ impl<'a> MyAppContext<'a> {
         egui::SidePanel::right("my_right_panel").show(self.egui_ctx, |ui| {
             ui.set_width(200.0);
 
-            let mut ctx = TodoListContext {
-                egui_ctx: self.egui_ctx,
-                todo_list: &mut self.app.todo_list,
-                view_state: &mut self.app.todo_list_view_state,
-                ui,
+            let mut global_events = Vec::new();
+            let mut model_commands = Vec::new();
+
+            let mut ctx = ComponentContext {
+                model: &self.app.model,
+                undo_manager: &self.app.undo_manager,
+                model_commands: &mut model_commands,
+                global_events: &mut global_events,
             };
 
-            ctx.update();
+            self.app.todo_list_component.update(ui, &mut ctx);
+            for c in model_commands {
+                self.app.undo_manager.push_undo(c.mutate(&mut self.app.model));
+            }
+            for e in global_events {
+                match e {
+                    GlobalEvent::UndoRequested => {
+                        self.app.undo_manager.undo(&mut self.app.model);
+                    }
+                    GlobalEvent::RedoRequested => {
+                        self.app.undo_manager.redo(&mut self.app.model);
+                    }
+                    GlobalEvent::ExitRequested => {
+                        self.should_close = true;
+                    }
+                }
+            }
         });
     }
 
