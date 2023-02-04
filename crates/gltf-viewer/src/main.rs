@@ -268,9 +268,9 @@ impl<'a> MyAppContext<'a> {
                 egui::Event::PointerButton {
                     button, pressed, ..
                 } => {
-                    // NOTE: egui::Response::drag_released 가 항상 false 를 반환하는 문제가 있어서
-                    // 해당 로직만 여기서 처리함
-                    // (macOS 에서 테스트됨)
+                    // NOTE: egui::Response::drag_released 로 처리하면,
+                    // 포인터가 창 밖으로 벗어난 채로 버튼을 떼었을 때 이벤트가 발생하지 않는 문제가 있어서
+                    // 해당 로직만 egui::Event::PointerButton 으로 처리함 (macOS 에서 테스트됨)
                     if button == &egui::PointerButton::Secondary && !*pressed {
                         InputEvent::MouseRightUp
                     } else {
@@ -357,29 +357,27 @@ impl<'a> MyAppContext<'a> {
                 .show(ui, move |ui| {
                     egui::Frame::canvas(ui.style()).show(ui, |ui| {
                         let response = self.custom_painting(ui);
-                        self.handle_central_panel_drag(response);
+                        self.handle_central_panel_drag(ui, response);
                     });
                 });
         });
     }
 
-    fn handle_central_panel_drag(&mut self, response: egui::Response) {
-        if !response.dragged_by(egui::PointerButton::Secondary) {
-            return;
-        }
-
-        if response.drag_started() {
+    fn handle_central_panel_drag(&mut self, ui: &mut egui::Ui, response: egui::Response) {
+        if response.drag_started() && response.dragged_by(egui::PointerButton::Secondary) {
             self.engine.input(&InputEvent::MouseRightDown);
+            ui.output().cursor_icon = egui::CursorIcon::Move;
         }
-        // NOTE: egui::Response::drag_released 가 항상 false 를 반환하는 문제가 있어서
-        // 해당 로직만 egui::Event::PointerButton 으로 다른 곳에서 처리함
-        // (macOS 에서 테스트됨)
+        // NOTE: egui::Response::drag_released 로 처리하면,
+        // 포인터가 창 밖으로 벗어난 채로 버튼을 떼었을 때 이벤트가 발생하지 않는 문제가 있어서
+        // 해당 로직만 egui::Event::PointerButton 으로 처리함 (macOS 에서 테스트됨)
         // if response.drag_released() {
-        //     self.resource().engine.input(&InputEvent::MouseRightUp);
+        //     self.engine.input(&InputEvent::MouseRightUp);
         // }
-        if response.dragged() {
+        if response.dragged() && response.dragged_by(egui::PointerButton::Secondary) {
             let delta = response.drag_delta() / 2.0; // FIXME: device pixel ratio?
             self.engine.input(&InputEvent::MouseMove { delta_x: delta.x, delta_y: delta.y });
+            ui.output().cursor_icon = egui::CursorIcon::Move;
         }
     }
 
