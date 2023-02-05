@@ -147,8 +147,13 @@ impl PaintResource {
     }
 }
 
+enum AppMode {
+    TodoList(TodoListViewState),
+    HelloWorld,
+}
+
 struct MyApp {
-    todo_list_view_state: TodoListViewState,
+    mode: AppMode,
     undo_manager: UndoManager,
     model: TodoListModel,
 }
@@ -169,7 +174,7 @@ impl MyApp {
             .insert(paint_resource);
 
         Some(MyApp {
-            todo_list_view_state: TodoListViewState::new(),
+            mode: AppMode::TodoList(TodoListViewState::new()),
             undo_manager: UndoManager::new(),
             model: Default::default(),
         })
@@ -281,8 +286,21 @@ impl<'a> MyAppContext<'a> {
     }
 
     fn top_panel(&mut self) {
+        let mut is_todo_list = false;
+        let mut is_hello_world = false;
+        match &self.app.mode {
+            AppMode::TodoList(_) => is_todo_list = true,
+            AppMode::HelloWorld => is_hello_world = true,
+        }
         egui::TopBottomPanel::top("my_panel").show(self.egui_ctx, |ui| {
-            ui.label("Hello World!");
+            ui.horizontal(|ui| {
+                if ui.selectable_label(is_todo_list, "TodoList").clicked() && !is_todo_list {
+                    self.app.mode = AppMode::TodoList(TodoListViewState::new());
+                }
+                if ui.selectable_label(is_hello_world, "Hello World").clicked() && !is_hello_world {
+                    self.app.mode = AppMode::HelloWorld;
+                }
+            });
         });
     }
 
@@ -300,36 +318,48 @@ impl<'a> MyAppContext<'a> {
 
     fn right_panel(&mut self) {
         egui::SidePanel::right("my_right_panel").show(self.egui_ctx, |ui| {
-            ui.set_width(200.0);
-
-            let mut model_commands = Vec::new();
-
-            let (undo, redo, exit) = {
-                let mut ctx = TodoListViewContext::new(
-                    &self.app.model,
-                    &self.app.undo_manager,
-                    &mut model_commands,
-                );
-
-                self.app.todo_list_view_state.update(ui, &mut ctx);
-
-                (ctx.undo_requested(), ctx.redo_requested(), ctx.exit_requested())
-            };
-
-            if undo {
-                self.app.undo_manager.undo(&mut self.app.model);
-            }
-            if redo {
-                self.app.undo_manager.redo(&mut self.app.model);
-            }
-            if exit {
-                self.should_close = true;
-            }
-
-            for c in model_commands {
-                self.app.undo_manager.push_undo(c.mutate(&mut self.app.model));
+            match &self.app.mode {
+                AppMode::TodoList(_) => self.todo_list(ui),
+                AppMode::HelloWorld => {
+                    ui.label("Hello World!");
+                }
             }
         });
+    }
+
+    fn todo_list(&mut self, ui: &mut egui::Ui) {
+        let AppMode::TodoList(ref mut view_state) = self.app.mode else {
+            return;
+        };
+        ui.set_width(200.0);
+
+        let mut model_commands = Vec::new();
+
+        let (undo, redo, exit) = {
+            let mut ctx = TodoListViewContext::new(
+                &self.app.model,
+                &self.app.undo_manager,
+                &mut model_commands,
+            );
+
+            view_state.update(ui, &mut ctx);
+
+            (ctx.undo_requested(), ctx.redo_requested(), ctx.exit_requested())
+        };
+
+        if undo {
+            self.app.undo_manager.undo(&mut self.app.model);
+        }
+        if redo {
+            self.app.undo_manager.redo(&mut self.app.model);
+        }
+        if exit {
+            self.should_close = true;
+        }
+
+        for c in model_commands {
+            self.app.undo_manager.push_undo(c.mutate(&mut self.app.model));
+        }
     }
 
     fn central_panel(&mut self) {
