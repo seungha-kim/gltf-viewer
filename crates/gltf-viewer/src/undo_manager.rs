@@ -1,9 +1,9 @@
-use crate::command::ModelCommand;
-use crate::model::Model;
+use crate::command::TodoListModelCommand;
+use crate::model::TodoListModel;
 
 pub struct UndoManager {
-    undo_stack: Vec<ModelCommand>,
-    redo_stack: Vec<ModelCommand>,
+    undo_stack: Vec<TodoListModelCommand>,
+    redo_stack: Vec<TodoListModelCommand>,
 }
 
 impl UndoManager {
@@ -22,17 +22,17 @@ impl UndoManager {
         !self.redo_stack.is_empty()
     }
 
-    pub fn undo(&mut self, model: &mut Model) {
+    pub fn undo(&mut self, model: &mut TodoListModel) {
         let Some(command) = self.undo_stack.pop() else { return; };
         self.redo_stack.push(command.mutate(model));
     }
 
-    pub fn redo(&mut self, model: &mut Model) {
+    pub fn redo(&mut self, model: &mut TodoListModel) {
         let Some(command) = self.redo_stack.pop() else { return; };
         self.undo_stack.push(command.mutate(model));
     }
 
-    pub fn push_undo(&mut self, command: ModelCommand) {
+    pub fn push_undo(&mut self, command: TodoListModelCommand) {
         self.redo_stack.clear();
         self.undo_stack.push(command);
     }

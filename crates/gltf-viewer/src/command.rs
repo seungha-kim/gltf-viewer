@@ -1,4 +1,4 @@
-use crate::model::{Model, TodoItem};
+use crate::model::{TodoListModel, TodoItem};
 
 /*
 이 파일은 다음 내용을 포함한다.
@@ -22,7 +22,7 @@ use crate::model::{Model, TodoItem};
  */
 
 #[derive(Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
-pub enum ModelCommand {
+pub enum TodoListModelCommand {
     CreateTodoItem {
         id: Option<uuid::Uuid>,
         title: String,
@@ -41,40 +41,40 @@ pub enum ModelCommand {
     },
 }
 
-impl ModelCommand {
+impl TodoListModelCommand {
     /// Mutate the model content by given command, and return the reverse.
-    pub fn mutate(self, model: &mut Model) -> ModelCommand {
+    pub fn mutate(self, model: &mut TodoListModel) -> TodoListModelCommand {
         match self {
-            ModelCommand::CreateTodoItem { id, title, completed } => {
+            TodoListModelCommand::CreateTodoItem { id, title, completed } => {
                 let id = id.unwrap_or_else(uuid::Uuid::new_v4);
                 model.items.insert(id, TodoItem {
                     id,
                     title,
                     completed,
                 });
-                ModelCommand::DeleteTodoItem {
+                TodoListModelCommand::DeleteTodoItem {
                     id
                 }
             }
-            ModelCommand::UpdateCompletedOfTodoItem { id, completed } => {
+            TodoListModelCommand::UpdateCompletedOfTodoItem { id, completed } => {
                 let item = model.items.get_mut(&id).expect("Can't find with id");
                 item.completed = completed;
-                ModelCommand::UpdateCompletedOfTodoItem {
+                TodoListModelCommand::UpdateCompletedOfTodoItem {
                     id,
                     completed: !completed,
                 }
             }
-            ModelCommand::UpdateTitleOfTodoItem { id, mut title } => {
+            TodoListModelCommand::UpdateTitleOfTodoItem { id, mut title } => {
                 let item = model.items.get_mut(&id).expect("Can't find with id");
                 std::mem::swap(&mut item.title, &mut title);
-                ModelCommand::UpdateTitleOfTodoItem {
+                TodoListModelCommand::UpdateTitleOfTodoItem {
                     id,
                     title,
                 }
             }
-            ModelCommand::DeleteTodoItem { id } => {
+            TodoListModelCommand::DeleteTodoItem { id } => {
                 let TodoItem { id, title, completed } = model.items.remove(&id).expect("Can't find with id");
-                ModelCommand::CreateTodoItem {
+                TodoListModelCommand::CreateTodoItem {
                     id: Some(id),
                     title,
                     completed,

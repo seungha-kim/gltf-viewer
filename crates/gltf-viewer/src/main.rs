@@ -4,20 +4,17 @@ mod ui;
 mod model;
 mod command;
 mod undo_manager;
-mod global_event;
 
 use std::sync::Arc;
-use std::time::Duration;
 use eframe::egui::style::Margin;
 use gltf_engine::{AbstractKey, InputEvent, wgpu};
 use gltf_engine::Engine;
 
 use eframe::egui;
-use eframe::egui::{Pos2, Vec2};
-use crate::global_event::GlobalEvent;
-use crate::model::Model;
-use crate::ui::component::{Component, ComponentContext};
+use crate::model::TodoListModel;
+use crate::ui::todo_list::{TodoListViewContext, TodoListViewState};
 use crate::undo_manager::UndoManager;
+use crate::ui::framework::*;
 
 fn main() {
     // Log to stdout (if you run with `RUST_LOG=debug`).
@@ -151,10 +148,9 @@ impl PaintResource {
 }
 
 struct MyApp {
-    prev_pointer_pos: Option<Pos2>,
-    todo_list_component: Component,
+    todo_list_view_state: TodoListViewState,
     undo_manager: UndoManager,
-    model: Model,
+    model: TodoListModel,
 }
 
 impl MyApp {
@@ -173,8 +169,7 @@ impl MyApp {
             .insert(paint_resource);
 
         Some(MyApp {
-            prev_pointer_pos: None,
-            todo_list_component: Component::new(),
+            todo_list_view_state: TodoListViewState::new(),
             undo_manager: UndoManager::new(),
             model: Default::default(),
         })
@@ -187,9 +182,6 @@ struct MyAppContext<'a> {
     engine: &'a mut Engine,
     should_close: bool,
     request_repaint: bool,
-    // model: &'a mut Model,
-    // undo_manager: &'a mut UndoManager,
-    // todo_list_component: &'a mut Component,
 }
 
 impl eframe::App for MyApp {
@@ -310,32 +302,32 @@ impl<'a> MyAppContext<'a> {
         egui::SidePanel::right("my_right_panel").show(self.egui_ctx, |ui| {
             ui.set_width(200.0);
 
-            let mut global_events = Vec::new();
             let mut model_commands = Vec::new();
 
-            let mut ctx = ComponentContext {
-                model: &self.app.model,
-                undo_manager: &self.app.undo_manager,
-                model_commands: &mut model_commands,
-                global_events: &mut global_events,
+            let (undo, redo, exit) = {
+                let mut ctx = TodoListViewContext::new(
+                    &self.app.model,
+                    &self.app.undo_manager,
+                    &mut model_commands,
+                );
+
+                self.app.todo_list_view_state.update(ui, &mut ctx);
+
+                (ctx.undo_requested(), ctx.redo_requested(), ctx.exit_requested())
             };
 
-            self.app.todo_list_component.update(ui, &mut ctx);
+            if undo {
+                self.app.undo_manager.undo(&mut self.app.model);
+            }
+            if redo {
+                self.app.undo_manager.redo(&mut self.app.model);
+            }
+            if exit {
+                self.should_close = true;
+            }
+
             for c in model_commands {
                 self.app.undo_manager.push_undo(c.mutate(&mut self.app.model));
-            }
-            for e in global_events {
-                match e {
-                    GlobalEvent::UndoRequested => {
-                        self.app.undo_manager.undo(&mut self.app.model);
-                    }
-                    GlobalEvent::RedoRequested => {
-                        self.app.undo_manager.redo(&mut self.app.model);
-                    }
-                    GlobalEvent::ExitRequested => {
-                        self.should_close = true;
-                    }
-                }
             }
         });
     }

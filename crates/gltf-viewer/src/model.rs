@@ -7,25 +7,25 @@ pub struct TodoItem {
 }
 
 // TODO: more conservative interface
-pub struct Model {
+pub struct TodoListModel {
     pub items: HashMap<uuid::Uuid, TodoItem>,
     pub item_order: Vec<uuid::Uuid>,
 }
 
-impl From<Vec<TodoItem>> for Model {
+impl From<Vec<TodoItem>> for TodoListModel {
     fn from(items: Vec<TodoItem>) -> Self {
         let mut map = HashMap::new();
         for item in items {
             map.insert(item.id, item);
         }
-        Model {
+        TodoListModel {
             items: map,
             item_order: Vec::new(),
         }
     }
 }
 
-impl Default for Model {
+impl Default for TodoListModel {
     fn default() -> Self {
         let items = vec![
             TodoItem {
