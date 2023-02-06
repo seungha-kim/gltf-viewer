@@ -1,8 +1,8 @@
 use eframe::egui;
 use eframe::egui::Ui;
-use crate::command::TodoListModelCommand;
+use crate::command::TodoListCommand;
+use crate::model::TodoListModel;
 use crate::ui::framework::*;
-use super::view_context::TodoListViewContext;
 
 pub struct TodoListViewState {
     new_title: String,
@@ -31,11 +31,13 @@ pub enum TodoListViewEvent {
     RedoRequested,
 }
 
-impl ViewState for TodoListViewState {
-    type Context<'a> = TodoListViewContext<'a>;
+pub trait TodoListContext: ViewContext<TodoListModel, TodoListCommand> + UndoableViewContext {}
+
+impl<C: TodoListContext> ViewState<TodoListModel, C> for TodoListViewState {
+    type Command = TodoListCommand;
     type Event = TodoListViewEvent;
 
-    fn interact(&mut self, ui: &mut Ui, ctx: &Self::Context<'_>, events: &mut Vec<Self::Event>) {
+    fn interact(&mut self, ui: &mut Ui, ctx: &C, events: &mut Vec<Self::Event>) {
         ui.heading("To-do List");
         if ui.add_enabled(ctx.can_undo(), egui::widgets::Button::new("Undo")).clicked() {
             events.push(TodoListViewEvent::UndoRequested);
@@ -56,11 +58,11 @@ impl ViewState for TodoListViewState {
         }
     }
 
-    fn handle_view_event(&mut self, ctx: &mut Self::Context<'_>, event: Self::Event) {
+    fn handle_view_event(&mut self, ctx: &mut C, event: Self::Event) {
         match event {
             TodoListViewEvent::TodoItemCreated => {
                 let title = std::mem::take(&mut self.new_title);
-                ctx.push_command(TodoListModelCommand::CreateTodoItem {
+                ctx.push_command(TodoListCommand::CreateTodoItem {
                     id: None,
                     title,
                     completed: false,
@@ -78,11 +80,11 @@ impl ViewState for TodoListViewState {
             }
             TodoListViewEvent::TodoItemDeleted { id } => {
                 self.try_finish_editing(ctx);
-                ctx.push_command(TodoListModelCommand::DeleteTodoItem { id });
+                ctx.push_command(TodoListCommand::DeleteTodoItem { id });
             }
             TodoListViewEvent::TodoItemToggled { id } => {
                 let item = ctx.model().items.get(&id).expect("Can't find with id");
-                ctx.push_command(TodoListModelCommand::UpdateCompletedOfTodoItem {
+                ctx.push_command(TodoListCommand::UpdateCompletedOfTodoItem {
                     id,
                     completed: !item.completed,
                 });
@@ -96,6 +98,7 @@ impl ViewState for TodoListViewState {
         }
     }
 }
+
 
 impl TodoListViewState {
     pub fn new() -> Self {
@@ -124,7 +127,7 @@ impl TodoListViewState {
         }
     }
 
-    fn todo_list(&mut self, ui: &mut egui::Ui, ctx: &TodoListViewContext, events: &mut Vec<TodoListViewEvent>) {
+    fn todo_list<C: TodoListContext>(&mut self, ui: &mut egui::Ui, ctx: &C, events: &mut Vec<TodoListViewEvent>) {
         // Computed values
         let current_editing_id = self.edit_state.as_ref().map(|s| s.id);
 
@@ -200,12 +203,12 @@ impl TodoListViewState {
         }
     }
 
-    fn try_finish_editing(&mut self, ctx: &mut TodoListViewContext) {
+    fn try_finish_editing<C: TodoListContext>(&mut self, ctx: &mut C) {
         let Some(EditingItem { id: item_id, title: text_for_edit, .. }) = self.edit_state.take() else { return; };
         if ctx.model().items[&item_id].title == text_for_edit {
             return;
         }
-        ctx.push_command(TodoListModelCommand::UpdateTitleOfTodoItem {
+        ctx.push_command(TodoListCommand::UpdateTitleOfTodoItem {
             id: item_id,
             title: text_for_edit,
         });

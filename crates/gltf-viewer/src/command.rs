@@ -1,5 +1,3 @@
-use crate::model::{TodoListModel, TodoItem};
-
 /*
 이 파일은 다음 내용을 포함한다.
 
@@ -22,7 +20,7 @@ use crate::model::{TodoListModel, TodoItem};
  */
 
 #[derive(Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
-pub enum TodoListModelCommand {
+pub enum TodoListCommand {
     CreateTodoItem {
         id: Option<uuid::Uuid>,
         title: String,
@@ -39,47 +37,4 @@ pub enum TodoListModelCommand {
     DeleteTodoItem {
         id: uuid::Uuid,
     },
-}
-
-impl TodoListModelCommand {
-    /// Mutate the model content by given command, and return the reverse.
-    pub fn mutate(self, model: &mut TodoListModel) -> TodoListModelCommand {
-        match self {
-            TodoListModelCommand::CreateTodoItem { id, title, completed } => {
-                let id = id.unwrap_or_else(uuid::Uuid::new_v4);
-                model.items.insert(id, TodoItem {
-                    id,
-                    title,
-                    completed,
-                });
-                TodoListModelCommand::DeleteTodoItem {
-                    id
-                }
-            }
-            TodoListModelCommand::UpdateCompletedOfTodoItem { id, completed } => {
-                let item = model.items.get_mut(&id).expect("Can't find with id");
-                item.completed = completed;
-                TodoListModelCommand::UpdateCompletedOfTodoItem {
-                    id,
-                    completed: !completed,
-                }
-            }
-            TodoListModelCommand::UpdateTitleOfTodoItem { id, mut title } => {
-                let item = model.items.get_mut(&id).expect("Can't find with id");
-                std::mem::swap(&mut item.title, &mut title);
-                TodoListModelCommand::UpdateTitleOfTodoItem {
-                    id,
-                    title,
-                }
-            }
-            TodoListModelCommand::DeleteTodoItem { id } => {
-                let TodoItem { id, title, completed } = model.items.remove(&id).expect("Can't find with id");
-                TodoListModelCommand::CreateTodoItem {
-                    id: Some(id),
-                    title,
-                    completed,
-                }
-            }
-        }
-    }
 }

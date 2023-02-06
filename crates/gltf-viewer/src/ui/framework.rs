@@ -1,30 +1,31 @@
 use eframe::egui;
 
-pub trait ViewContext {
-    type Model;
-    type Command;
+pub trait ViewContext<M, CMD> {
+    fn model(&self) -> &M;
+    fn push_command(&mut self, command: CMD);
 
-    fn model(&self) -> &Self::Model;
+    fn exit_requested(&self) -> bool;
+    fn request_exit(&mut self);
+}
+
+pub trait UndoableViewContext {
     fn can_undo(&self) -> bool;
     fn can_redo(&self) -> bool;
     fn undo_requested(&self) -> bool;
     fn redo_requested(&self) -> bool;
-    fn exit_requested(&self) -> bool;
 
     fn request_undo(&mut self);
     fn request_redo(&mut self);
-    fn request_exit(&mut self);
-    fn push_command(&mut self, command: Self::Command);
 }
 
-pub trait ViewState {
-    type Context<'a>: ViewContext where Self: 'a;
+pub trait ViewState<M, CTX: ViewContext<M, Self::Command>> {
+    type Command;
     type Event;
 
-    fn interact(&mut self, ui: &mut egui::Ui, ctx: &Self::Context<'_>, events: &mut Vec<Self::Event>);
-    fn handle_view_event(&mut self, ctx: &mut Self::Context<'_>, event: Self::Event);
+    fn interact(&mut self, ui: &mut egui::Ui, ctx: &CTX, events: &mut Vec<Self::Event>);
+    fn handle_view_event(&mut self, ctx: &mut CTX, event: Self::Event);
 
-    fn update(&mut self, ui: &mut egui::Ui, ctx: &mut Self::Context<'_>) {
+    fn update(&mut self, ui: &mut egui::Ui, ctx: &mut CTX) {
         let mut events: Vec<Self::Event> = Vec::new();
         self.interact(ui, ctx, &mut events);
 
