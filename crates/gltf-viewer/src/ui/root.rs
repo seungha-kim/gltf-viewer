@@ -30,7 +30,8 @@ impl RootViewState {
 }
 
 pub trait RootViewContext: ViewContext<(), ()> {
-    fn engine(&mut self) -> &mut Engine;
+    fn engine_mut(&mut self) -> &mut Engine;
+    fn engine(&self) -> &Engine;
     fn request_repaint(&mut self);
 }
 
@@ -105,7 +106,7 @@ impl<C: RootViewContext> ViewState<(), C> for RootViewState {
     fn handle_view_event(&mut self, ctx: &mut C, event: Self::Event) {
         match event {
             RootViewEvent::InputEvent(input_event) => {
-                ctx.engine().input(&input_event);
+                ctx.engine_mut().input(&input_event);
             }
             RootViewEvent::ChangeWorkspace(workspace) => {
                 self.workspace = workspace;
@@ -143,10 +144,48 @@ impl RootViewState {
         });
     }
 
-    fn left_panel<C: RootViewContext>(&mut self, ui: &mut egui::Ui, _ctx: &C, _events: &mut Vec<RootViewEvent>) {
+    fn left_panel<C: RootViewContext>(&mut self, ui: &mut egui::Ui, ctx: &C, _events: &mut Vec<RootViewEvent>) {
         egui::SidePanel::left("my_left_panel").show(ui.ctx(), |ui| {
-            ui.label("Hello World!");
+            ui.heading("Node Tree");
+            ui.separator();
+            egui::ScrollArea::vertical()
+                .auto_shrink([false; 2])
+                .show(ui, |ui| {
+                    let model_root = ctx.engine().model_root();
+                    let scene = &model_root.scenes[model_root.default_scene_id];
+                    for &node_id in scene.nodes.iter() {
+                        self.rec_node(ui, ctx, node_id);
+                    }
+                });
         });
+
+    }
+
+    fn rec_node<C: RootViewContext>(&mut self, ui: &mut egui::Ui, ctx: &C, node_id: usize) {
+        let model_root = ctx.engine().model_root();
+        let node = &model_root.nodes[node_id];
+
+        let id_string = format!("Node {}", node.gltf_index);
+        let id = ui.make_persistent_id(&id_string);
+        if node.children.is_empty() {
+            ui.horizontal(|ui| {
+                if ui.selectable_label(false, &id_string).clicked() {
+                    log::info!("Clicked: {}", &id_string);
+                };
+            });
+        } else {
+            egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
+                .show_header(ui, |ui| {
+                    if ui.selectable_label(false, &id_string).clicked() {
+                        log::info!("Clicked: {}", &id_string);
+                    }
+                })
+                .body(|ui| {
+                    for &child_id in &node.children {
+                        self.rec_node(&mut *ui, ctx, child_id);
+                    }
+                });
+        }
     }
 
     fn right_panel<C: RootViewContext>(&mut self, ui: &mut egui::Ui, ctx: &C, events: &mut Vec<RootViewEvent>) {

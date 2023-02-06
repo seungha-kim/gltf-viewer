@@ -462,6 +462,10 @@ impl Engine {
         changed
     }
 
+    pub fn model_root(&self) -> &model::ImportedGltf {
+        &self.model_root
+    }
+
     // TODO: eframe 대응
     pub fn input(&mut self, event: &InputEvent) -> bool {
         self.fly_cam_session.handle_input(event, &mut self.camera_controller)

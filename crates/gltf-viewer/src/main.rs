@@ -221,7 +221,11 @@ impl ViewContext<(), ()> for RootViewContextImpl<'_> {
 }
 
 impl RootViewContext for RootViewContextImpl<'_> {
-    fn engine(&mut self) -> &mut Engine {
+    fn engine_mut(&mut self) -> &mut Engine {
+        self.engine
+    }
+
+    fn engine(&self) -> &Engine {
         self.engine
     }
 

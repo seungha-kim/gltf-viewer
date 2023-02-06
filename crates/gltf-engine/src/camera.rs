@@ -153,7 +153,6 @@ impl CameraController {
                 self.amount_down = amount;
                 true
             }
-            _ => false,
         }
     }
 
