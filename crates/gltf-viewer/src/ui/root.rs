@@ -9,8 +9,21 @@ use crate::ui::todo_list::{TodoListContext, TodoListViewState};
 use crate::undo_manager::UndoManager;
 
 pub enum WorkspaceKind {
+    Layout(LayoutWorkspace),
     TodoList(TodoListViewState),
     HelloWorld,
+}
+
+struct LayoutWorkspace {
+    node_selection: Option<usize>, // TODO: multiple selection
+}
+
+impl LayoutWorkspace {
+    fn new() -> Self {
+        Self {
+            node_selection: None,
+        }
+    }
 }
 
 pub struct RootViewState {
@@ -22,7 +35,7 @@ pub struct RootViewState {
 impl RootViewState {
     pub fn new() -> RootViewState {
         Self {
-            workspace: WorkspaceKind::TodoList(TodoListViewState::new()),
+            workspace: WorkspaceKind::Layout(LayoutWorkspace::new()),
             undo_manager: UndoManager::new(),
             todo_list: TodoListModel::default(),
         }
@@ -39,6 +52,7 @@ pub enum RootViewEvent {
     InputEvent(InputEvent),
     ChangeWorkspace(WorkspaceKind),
     ExitRequested,
+    SingleNodeSelected(usize),
 }
 
 impl<C: RootViewContext> ViewState<(), C> for RootViewState {
@@ -114,20 +128,30 @@ impl<C: RootViewContext> ViewState<(), C> for RootViewState {
             RootViewEvent::ExitRequested => {
                 ctx.request_exit();
             }
+            RootViewEvent::SingleNodeSelected(node_id) => {
+                if let WorkspaceKind::Layout(ref mut state) = self.workspace {
+                    state.node_selection = Some(node_id);
+                }
+            }
         }
     }
 }
 
 impl RootViewState {
     fn top_panel<C: RootViewContext>(&mut self, ui: &mut egui::Ui, _ctx: &C, events: &mut Vec<RootViewEvent>) {
+        let mut is_layout = false;
         let mut is_todo_list = false;
         let mut is_hello_world = false;
         match &self.workspace {
+            WorkspaceKind::Layout(_) => is_layout = true,
             WorkspaceKind::TodoList(_) => is_todo_list = true,
             WorkspaceKind::HelloWorld => is_hello_world = true,
         }
         egui::TopBottomPanel::top("my_panel").show(ui.ctx(), |ui| {
             ui.horizontal(|ui| {
+                if ui.selectable_label(is_layout, "Layout").clicked() && !is_layout {
+                    events.push(RootViewEvent::ChangeWorkspace(WorkspaceKind::Layout(LayoutWorkspace::new())));
+                }
                 if ui.selectable_label(is_todo_list, "TodoList").clicked() && !is_todo_list {
                     events.push(RootViewEvent::ChangeWorkspace(WorkspaceKind::TodoList(TodoListViewState::new())));
                 }
@@ -144,7 +168,7 @@ impl RootViewState {
         });
     }
 
-    fn left_panel<C: RootViewContext>(&mut self, ui: &mut egui::Ui, ctx: &C, _events: &mut Vec<RootViewEvent>) {
+    fn left_panel<C: RootViewContext>(&mut self, ui: &mut egui::Ui, ctx: &C, events: &mut Vec<RootViewEvent>) {
         egui::SidePanel::left("my_left_panel").show(ui.ctx(), |ui| {
             ui.heading("Node Tree");
             ui.separator();
@@ -154,14 +178,16 @@ impl RootViewState {
                     let model_root = ctx.engine().model_root();
                     let scene = &model_root.scenes[model_root.default_scene_id];
                     for &node_id in scene.nodes.iter() {
-                        self.rec_node(ui, ctx, node_id);
+                        self.rec_node(ui, ctx, node_id, events);
                     }
                 });
         });
-
     }
 
-    fn rec_node<C: RootViewContext>(&mut self, ui: &mut egui::Ui, ctx: &C, node_id: usize) {
+    fn rec_node<C: RootViewContext>(&mut self, ui: &mut egui::Ui, ctx: &C, node_id: usize, events: &mut Vec<RootViewEvent>) {
+        let WorkspaceKind::Layout(ref state) = self.workspace else {
+            panic!("function must be called in layout workspace");
+        };
         let model_root = ctx.engine().model_root();
         let node = &model_root.nodes[node_id];
 
@@ -169,20 +195,22 @@ impl RootViewState {
         let id = ui.make_persistent_id(&id_string);
         if node.children.is_empty() {
             ui.horizontal(|ui| {
-                if ui.selectable_label(false, &id_string).clicked() {
-                    log::info!("Clicked: {}", &id_string);
+                let selected = state.node_selection.map(|s| s == node.gltf_index).unwrap_or(false);
+                if ui.selectable_label(selected, &id_string).clicked() {
+                    events.push(RootViewEvent::SingleNodeSelected(node.gltf_index));
                 };
             });
         } else {
             egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
                 .show_header(ui, |ui| {
-                    if ui.selectable_label(false, &id_string).clicked() {
-                        log::info!("Clicked: {}", &id_string);
+                    let selected = state.node_selection.map(|s| s == node.gltf_index).unwrap_or(false);
+                    if ui.selectable_label(selected, &id_string).clicked() {
+                        events.push(RootViewEvent::SingleNodeSelected(node.gltf_index));
                     }
                 })
                 .body(|ui| {
                     for &child_id in &node.children {
-                        self.rec_node(&mut *ui, ctx, child_id);
+                        self.rec_node(&mut *ui, ctx, child_id, events);
                     }
                 });
         }
@@ -191,6 +219,9 @@ impl RootViewState {
     fn right_panel<C: RootViewContext>(&mut self, ui: &mut egui::Ui, ctx: &C, events: &mut Vec<RootViewEvent>) {
         egui::SidePanel::right("my_right_panel").show(ui.ctx(), |ui| {
             match &self.workspace {
+                WorkspaceKind::Layout(_) => {
+                    self.property_panel(ui, ctx, events);
+                }
                 WorkspaceKind::TodoList(_) => {
                     self.todo_list(ui, ctx, events);
                 },
@@ -199,6 +230,16 @@ impl RootViewState {
                 },
             }
         });
+    }
+
+    fn property_panel<C: RootViewContext>(&mut self, ui: &mut egui::Ui, ctx: &C, _events: &mut Vec<RootViewEvent>) {
+        if let WorkspaceKind::Layout(ref state) = self.workspace {
+            if let Some(node_id) = state.node_selection {
+                let node = &ctx.engine().model_root().nodes[node_id];
+                ui.label(format!("Node {node_id}"));
+                ui.label(format!("Children: {}", node.children.len()));
+            }
+        }
     }
 
     fn todo_list<C: RootViewContext>(&mut self, ui: &mut egui::Ui, _ctx: &C, events: &mut Vec<RootViewEvent>) {

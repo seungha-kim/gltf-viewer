@@ -1,5 +1,4 @@
 use eframe::egui;
-use eframe::egui::Ui;
 use crate::command::TodoListCommand;
 use crate::model::TodoListModel;
 use crate::ui::framework::*;
@@ -37,7 +36,7 @@ impl<C: TodoListContext> ViewState<TodoListModel, C> for TodoListViewState {
     type Command = TodoListCommand;
     type Event = TodoListViewEvent;
 
-    fn interact(&mut self, ui: &mut Ui, ctx: &C, events: &mut Vec<Self::Event>) {
+    fn interact(&mut self, ui: &mut egui::Ui, ctx: &C, events: &mut Vec<Self::Event>) {
         ui.heading("To-do List");
         if ui.add_enabled(ctx.can_undo(), egui::widgets::Button::new("Undo")).clicked() {
             events.push(TodoListViewEvent::UndoRequested);
