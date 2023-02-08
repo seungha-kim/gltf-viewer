@@ -22,12 +22,11 @@ pub trait ViewState<M, CTX: ViewContext<M, Self::Command>> {
     type Command;
     type Event;
 
-    fn interact(&mut self, ui: &mut egui::Ui, ctx: &CTX, events: &mut Vec<Self::Event>);
+    fn interact(&mut self, ui: &mut egui::Ui, ctx: &CTX) -> Vec<Self::Event>;
     fn handle_view_event(&mut self, ctx: &mut CTX, event: Self::Event);
 
     fn update(&mut self, ui: &mut egui::Ui, ctx: &mut CTX) {
-        let mut events: Vec<Self::Event> = Vec::new();
-        self.interact(ui, ctx, &mut events);
+        let events = self.interact(ui, ctx);
 
         for event in events {
             self.handle_view_event(ctx, event);

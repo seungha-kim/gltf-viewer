@@ -6,6 +6,7 @@ use crate::ui::framework::*;
 pub struct TodoListViewState {
     new_title: String,
     edit_state: Option<EditingItem>,
+    events: Vec<TodoListViewEvent>,
 }
 
 struct EditingItem {
@@ -36,25 +37,27 @@ impl<C: TodoListContext> ViewState<TodoListModel, C> for TodoListViewState {
     type Command = TodoListCommand;
     type Event = TodoListViewEvent;
 
-    fn interact(&mut self, ui: &mut egui::Ui, ctx: &C, events: &mut Vec<Self::Event>) {
+    fn interact(&mut self, ui: &mut egui::Ui, ctx: &C) -> Vec<Self::Event> {
         ui.heading("To-do List");
         if ui.add_enabled(ctx.can_undo(), egui::widgets::Button::new("Undo")).clicked() {
-            events.push(TodoListViewEvent::UndoRequested);
+            self.events.push(TodoListViewEvent::UndoRequested);
         }
         if ui.add_enabled(ctx.can_redo(), egui::widgets::Button::new("Redo")).clicked() {
-            events.push(TodoListViewEvent::RedoRequested);
+            self.events.push(TodoListViewEvent::RedoRequested);
         }
 
-        self.text_edit(ui, events);
-        self.todo_list(ui, ctx, events);
+        self.text_edit(ui);
+        self.todo_list(ui, ctx);
 
         let input = &ui.ctx().input();
         // NOTE: fizz-buzz!
         if input.modifiers.command && input.modifiers.shift && input.key_pressed(egui::Key::Z) {
-            events.push(TodoListViewEvent::RedoRequested);
+            self.events.push(TodoListViewEvent::RedoRequested);
         } else if input.modifiers.command && input.key_pressed(egui::Key::Z) {
-            events.push(TodoListViewEvent::UndoRequested);
+            self.events.push(TodoListViewEvent::UndoRequested);
         }
+
+        std::mem::take(&mut self.events)
     }
 
     fn handle_view_event(&mut self, ctx: &mut C, event: Self::Event) {
@@ -104,10 +107,11 @@ impl TodoListViewState {
         Self {
             new_title: "".into(),
             edit_state: None,
+            events: Vec::new(),
         }
     }
 
-    fn text_edit(&mut self, ui: &mut egui::Ui, events: &mut Vec<TodoListViewEvent>) {
+    fn text_edit(&mut self, ui: &mut egui::Ui) {
         // Props
         let is_empty_text = self.new_title.is_empty();
 
@@ -122,11 +126,11 @@ impl TodoListViewState {
 
         if Self::enter_pressed(&text_edit, ui.ctx()) || add_button.clicked() {
             text_edit.request_focus();
-            events.push(TodoListViewEvent::TodoItemCreated);
+            self.events.push(TodoListViewEvent::TodoItemCreated);
         }
     }
 
-    fn todo_list<C: TodoListContext>(&mut self, ui: &mut egui::Ui, ctx: &C, events: &mut Vec<TodoListViewEvent>) {
+    fn todo_list<C: TodoListContext>(&mut self, ui: &mut egui::Ui, ctx: &C) {
         // Computed values
         let current_editing_id = self.edit_state.as_ref().map(|s| s.id);
 
@@ -160,11 +164,11 @@ impl TodoListViewState {
                         }
                         _ => ui.add(egui::widgets::Label::new(&item.title).wrap(true)).context_menu(|ui| {
                             if ui.button("Edit").clicked() {
-                                events.push(TodoListViewEvent::EditingStartedTodoItemTitle { id });
+                                self.events.push(TodoListViewEvent::EditingStartedTodoItemTitle { id });
                                 ui.close_menu();
                             }
                             if ui.button("Delete").clicked() {
-                                events.push(TodoListViewEvent::TodoItemDeleted { id });
+                                self.events.push(TodoListViewEvent::TodoItemDeleted { id });
                                 ui.close_menu();
                             }
                         })
@@ -181,13 +185,13 @@ impl TodoListViewState {
             let clicked_elsewhere_in_editing = is_editing && text_res.clicked_elsewhere();
 
             if checkbox.changed() {
-                events.push(TodoListViewEvent::TodoItemToggled { id });
+                self.events.push(TodoListViewEvent::TodoItemToggled { id });
             }
 
             if non_editing_item_clicked {
-                events.push(TodoListViewEvent::EditingStartedTodoItemTitle { id });
+                self.events.push(TodoListViewEvent::EditingStartedTodoItemTitle { id });
             } else if editing_item_enter_pressed || clicked_elsewhere_in_editing {
-                events.push(TodoListViewEvent::EditingFinishedTodoItemTitle);
+                self.events.push(TodoListViewEvent::EditingFinishedTodoItemTitle);
             }
 
             if is_editing && self.edit_state.as_ref().map(|s| s.request_focus).unwrap_or(false) {

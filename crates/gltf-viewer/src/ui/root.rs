@@ -14,7 +14,7 @@ pub enum WorkspaceKind {
     HelloWorld,
 }
 
-struct LayoutWorkspace {
+pub struct LayoutWorkspace {
     node_selection: Option<usize>, // TODO: multiple selection
 }
 
@@ -30,6 +30,7 @@ pub struct RootViewState {
     workspace: WorkspaceKind,
     undo_manager: UndoManager,
     todo_list: TodoListModel,
+    events: Vec<RootViewEvent>,
 }
 
 impl RootViewState {
@@ -38,6 +39,7 @@ impl RootViewState {
             workspace: WorkspaceKind::Layout(LayoutWorkspace::new()),
             undo_manager: UndoManager::new(),
             todo_list: TodoListModel::default(),
+            events: Vec::new(),
         }
     }
 }
@@ -59,14 +61,14 @@ impl<C: RootViewContext> ViewState<(), C> for RootViewState {
     type Command = ();
     type Event = RootViewEvent;
 
-    fn interact(&mut self, ui: &mut egui::Ui, ctx: &C, events: &mut Vec<Self::Event>) {
+    fn interact(&mut self, ui: &mut egui::Ui, ctx: &C) -> Vec<Self::Event> {
         ui.ctx().set_visuals(egui::Visuals::light());
         if !ui.ctx().input().keys_down.is_empty() {
             ui.ctx().request_repaint();
         }
 
         if ui.ctx().input().keys_down.contains(&egui::Key::Escape) {
-            events.push(RootViewEvent::ExitRequested);
+            self.events.push(RootViewEvent::ExitRequested);
         };
 
         for e in &ui.ctx().input().events {
@@ -106,15 +108,17 @@ impl<C: RootViewContext> ViewState<(), C> for RootViewState {
                 _ => continue,
             };
             {
-                events.push(RootViewEvent::InputEvent(input_event));
+                self.events.push(RootViewEvent::InputEvent(input_event));
             }
         }
 
-        self.top_panel(ui, ctx, events);
-        self.bottom_panel(ui, ctx, events);
-        self.left_panel(ui, ctx, events);
-        self.right_panel(ui, ctx, events);
-        self.central_panel(ui, ctx, events);
+        self.top_panel(ui, ctx);
+        self.bottom_panel(ui, ctx);
+        self.left_panel(ui, ctx);
+        self.right_panel(ui, ctx);
+        self.central_panel(ui, ctx);
+
+        std::mem::take(&mut self.events)
     }
 
     fn handle_view_event(&mut self, ctx: &mut C, event: Self::Event) {
@@ -138,7 +142,7 @@ impl<C: RootViewContext> ViewState<(), C> for RootViewState {
 }
 
 impl RootViewState {
-    fn top_panel<C: RootViewContext>(&mut self, ui: &mut egui::Ui, _ctx: &C, events: &mut Vec<RootViewEvent>) {
+    fn top_panel<C: RootViewContext>(&mut self, ui: &mut egui::Ui, _ctx: &C) {
         let mut is_layout = false;
         let mut is_todo_list = false;
         let mut is_hello_world = false;
@@ -150,25 +154,25 @@ impl RootViewState {
         egui::TopBottomPanel::top("my_panel").show(ui.ctx(), |ui| {
             ui.horizontal(|ui| {
                 if ui.selectable_label(is_layout, "Layout").clicked() && !is_layout {
-                    events.push(RootViewEvent::ChangeWorkspace(WorkspaceKind::Layout(LayoutWorkspace::new())));
+                    self.events.push(RootViewEvent::ChangeWorkspace(WorkspaceKind::Layout(LayoutWorkspace::new())));
                 }
                 if ui.selectable_label(is_todo_list, "TodoList").clicked() && !is_todo_list {
-                    events.push(RootViewEvent::ChangeWorkspace(WorkspaceKind::TodoList(TodoListViewState::new())));
+                    self.events.push(RootViewEvent::ChangeWorkspace(WorkspaceKind::TodoList(TodoListViewState::new())));
                 }
                 if ui.selectable_label(is_hello_world, "Hello World").clicked() && !is_hello_world {
-                    events.push(RootViewEvent::ChangeWorkspace(WorkspaceKind::HelloWorld));
+                    self.events.push(RootViewEvent::ChangeWorkspace(WorkspaceKind::HelloWorld));
                 }
             });
         });
     }
 
-    fn bottom_panel<C: RootViewContext>(&mut self, ui: &mut egui::Ui, _ctx: &C, _events: &mut Vec<RootViewEvent>) {
+    fn bottom_panel<C: RootViewContext>(&mut self, ui: &mut egui::Ui, _ctx: &C) {
         egui::TopBottomPanel::bottom("my_bottom_panel").show(ui.ctx(), |ui| {
             ui.label("Hello World!");
         });
     }
 
-    fn left_panel<C: RootViewContext>(&mut self, ui: &mut egui::Ui, ctx: &C, events: &mut Vec<RootViewEvent>) {
+    fn left_panel<C: RootViewContext>(&mut self, ui: &mut egui::Ui, ctx: &C) {
         egui::SidePanel::left("my_left_panel").show(ui.ctx(), |ui| {
             ui.heading("Node Tree");
             ui.separator();
@@ -178,13 +182,13 @@ impl RootViewState {
                     let model_root = ctx.engine().model_root();
                     let scene = &model_root.scenes[model_root.default_scene_id];
                     for &node_id in scene.nodes.iter() {
-                        self.rec_node(ui, ctx, node_id, events);
+                        self.rec_node(ui, ctx, node_id);
                     }
                 });
         });
     }
 
-    fn rec_node<C: RootViewContext>(&mut self, ui: &mut egui::Ui, ctx: &C, node_id: usize, events: &mut Vec<RootViewEvent>) {
+    fn rec_node<C: RootViewContext>(&mut self, ui: &mut egui::Ui, ctx: &C, node_id: usize) {
         let WorkspaceKind::Layout(ref state) = self.workspace else {
             panic!("function must be called in layout workspace");
         };
@@ -197,7 +201,7 @@ impl RootViewState {
             ui.horizontal(|ui| {
                 let selected = state.node_selection.map(|s| s == node.gltf_index).unwrap_or(false);
                 if ui.selectable_label(selected, &id_string).clicked() {
-                    events.push(RootViewEvent::SingleNodeSelected(node.gltf_index));
+                    self.events.push(RootViewEvent::SingleNodeSelected(node.gltf_index));
                 };
             });
         } else {
@@ -205,25 +209,25 @@ impl RootViewState {
                 .show_header(ui, |ui| {
                     let selected = state.node_selection.map(|s| s == node.gltf_index).unwrap_or(false);
                     if ui.selectable_label(selected, &id_string).clicked() {
-                        events.push(RootViewEvent::SingleNodeSelected(node.gltf_index));
+                        self.events.push(RootViewEvent::SingleNodeSelected(node.gltf_index));
                     }
                 })
                 .body(|ui| {
                     for &child_id in &node.children {
-                        self.rec_node(&mut *ui, ctx, child_id, events);
+                        self.rec_node(&mut *ui, ctx, child_id);
                     }
                 });
         }
     }
 
-    fn right_panel<C: RootViewContext>(&mut self, ui: &mut egui::Ui, ctx: &C, events: &mut Vec<RootViewEvent>) {
+    fn right_panel<C: RootViewContext>(&mut self, ui: &mut egui::Ui, ctx: &C) {
         egui::SidePanel::right("my_right_panel").show(ui.ctx(), |ui| {
             match &self.workspace {
                 WorkspaceKind::Layout(_) => {
-                    self.property_panel(ui, ctx, events);
+                    self.property_panel(ui, ctx);
                 }
                 WorkspaceKind::TodoList(_) => {
-                    self.todo_list(ui, ctx, events);
+                    self.todo_list(ui, ctx);
                 },
                 WorkspaceKind::HelloWorld => {
                     ui.label("Hello World!");
@@ -232,7 +236,7 @@ impl RootViewState {
         });
     }
 
-    fn property_panel<C: RootViewContext>(&mut self, ui: &mut egui::Ui, ctx: &C, _events: &mut Vec<RootViewEvent>) {
+    fn property_panel<C: RootViewContext>(&mut self, ui: &mut egui::Ui, ctx: &C) {
         if let WorkspaceKind::Layout(ref state) = self.workspace {
             if let Some(node_id) = state.node_selection {
                 let node = &ctx.engine().model_root().nodes[node_id];
@@ -242,7 +246,7 @@ impl RootViewState {
         }
     }
 
-    fn todo_list<C: RootViewContext>(&mut self, ui: &mut egui::Ui, _ctx: &C, events: &mut Vec<RootViewEvent>) {
+    fn todo_list<C: RootViewContext>(&mut self, ui: &mut egui::Ui, _ctx: &C) {
         let WorkspaceKind::TodoList(ref mut view_state) = self.workspace else { return; };
 
         ui.set_width(200.0);
@@ -268,7 +272,7 @@ impl RootViewState {
             self.undo_manager.redo(&mut self.todo_list);
         }
         if exit {
-            events.push(RootViewEvent::ExitRequested);
+            self.events.push(RootViewEvent::ExitRequested);
         }
 
         for c in model_commands {
@@ -276,7 +280,7 @@ impl RootViewState {
         }
     }
 
-    fn central_panel<C: RootViewContext>(&mut self, ui: &mut egui::Ui, _ctx: &C, events: &mut Vec<RootViewEvent>) {
+    fn central_panel<C: RootViewContext>(&mut self, ui: &mut egui::Ui, _ctx: &C) {
         let f = egui::Frame {
             inner_margin: egui::style::Margin {
                 left: 0.0,
@@ -294,7 +298,7 @@ impl RootViewState {
                     egui::Frame::canvas(ui.style()).show(ui, |ui| {
                         let response = self.custom_painting(ui);
                         if response.drag_started() && response.dragged_by(egui::PointerButton::Secondary) {
-                            events.push(RootViewEvent::InputEvent(InputEvent::MouseRightDown));
+                            self.events.push(RootViewEvent::InputEvent(InputEvent::MouseRightDown));
                             ui.output().cursor_icon = egui::CursorIcon::Move;
 
                         }
@@ -306,7 +310,7 @@ impl RootViewState {
                         // }
                         if response.dragged() && response.dragged_by(egui::PointerButton::Secondary) {
                             let delta = response.drag_delta() / 2.0; // FIXME: device pixel ratio?
-                            events.push(RootViewEvent::InputEvent(InputEvent::MouseMove { delta_x: delta.x, delta_y: delta.y }));
+                            self.events.push(RootViewEvent::InputEvent(InputEvent::MouseMove { delta_x: delta.x, delta_y: delta.y }));
                             ui.output().cursor_icon = egui::CursorIcon::Move;
                         }
                     });
