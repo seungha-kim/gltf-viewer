@@ -108,6 +108,10 @@ impl Node {
         };
         index
     }
+
+    pub fn abbreviated_id(&self) -> String {
+        self.id.to_string()[..8].to_string()
+    }
 }
 
 pub enum MaterialSourceInfo {

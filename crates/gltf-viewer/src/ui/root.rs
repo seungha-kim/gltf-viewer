@@ -204,7 +204,7 @@ impl RootViewState {
         let model_root = ctx.engine().model_root();
         let node = &model_root.nodes[&node_id];
 
-        let id_string = format!("Node {}", node.id);
+        let id_string = format!("Node {}", node.abbreviated_id());
         let id = ui.make_persistent_id(&id_string);
         if node.children.is_empty() {
             ui.horizontal(|ui| {
@@ -244,10 +244,11 @@ impl RootViewState {
     }
 
     fn property_panel<C: RootViewContext>(&mut self, ui: &mut egui::Ui, ctx: &C) {
+        ui.set_min_width(200.0);
         if let WorkspaceKind::Layout(ref state) = self.workspace {
             if let Some(node_id) = state.node_selection {
                 let node = &ctx.engine().model_root().nodes[&node_id];
-                ui.label(format!("Node {node_id}"));
+                ui.label(format!("Node {}", node.abbreviated_id()));
                 ui.label(format!("Children: {}", node.children.len()));
                 ui.separator();
                 ui.label("Position");
