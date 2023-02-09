@@ -1,15 +1,17 @@
-mod texture;
 mod camera;
-mod model;
-mod import;
 mod image_util;
+mod import;
+mod mesh;
+mod model;
+mod texture;
 
+use crate::camera::CameraController;
+use cgmath::*;
 use std::collections::HashSet;
+use uuid::Uuid;
+pub use wgpu;
 use wgpu::include_wgsl;
 use wgpu::util::DeviceExt;
-use cgmath::*;
-use crate::camera::CameraController;
-pub use wgpu;
 
 // Renderer 는 Window 나 UI 에 대해서는 몰라야 한다
 // 비즈니스 로직에 대해서도 몰라야 한다. 오직 렌더링에 대해서만
@@ -43,13 +45,21 @@ struct FlyDirectionSession {
 
 impl FlyCamSession {
     fn position_session(&mut self) -> Option<&mut FlyPositionSession> {
-        self.direction_session.as_mut().and_then(|s| s.position_session.as_mut())
+        self.direction_session
+            .as_mut()
+            .and_then(|s| s.position_session.as_mut())
     }
 
-    fn handle_input(&mut self, event: &InputEvent, camera_controller: &mut CameraController) -> bool {
+    fn handle_input(
+        &mut self,
+        event: &InputEvent,
+        camera_controller: &mut CameraController,
+    ) -> bool {
         match event {
             InputEvent::MouseRightDown => {
-                self.direction_session = Some(FlyDirectionSession { position_session: None });
+                self.direction_session = Some(FlyDirectionSession {
+                    position_session: None,
+                });
             }
             InputEvent::MouseRightUp => {
                 self.direction_session = None;
@@ -140,9 +150,8 @@ pub struct Engine {
     #[allow(dead_code)]
     white_texture: texture::Texture,
 
-    pending_nodes: Vec<usize>,
+    pending_nodes: Vec<Uuid>,
 }
-
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -151,7 +160,6 @@ struct NodeUniform {
     normal_mat: [[f32; 4]; 4],
 }
 
-
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct MaterialUniform {
@@ -159,7 +167,6 @@ struct MaterialUniform {
     emissive_factor: [f32; 3],
     _pad: f32,
 }
-
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -197,13 +204,11 @@ impl VertexPosition {
         wgpu::VertexBufferLayout {
             array_stride: mem::size_of::<Self>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[
-                wgpu::VertexAttribute {
-                    offset: 0,
-                    shader_location: 0,
-                    format: wgpu::VertexFormat::Float32x3,
-                },
-            ]
+            attributes: &[wgpu::VertexAttribute {
+                offset: 0,
+                shader_location: 0,
+                format: wgpu::VertexFormat::Float32x3,
+            }],
         }
     }
 }
@@ -217,13 +222,11 @@ impl VertexNormal {
         wgpu::VertexBufferLayout {
             array_stride: mem::size_of::<Self>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[
-                wgpu::VertexAttribute {
-                    offset: 0,
-                    shader_location: 1,
-                    format: wgpu::VertexFormat::Float32x3,
-                },
-            ],
+            attributes: &[wgpu::VertexAttribute {
+                offset: 0,
+                shader_location: 1,
+                format: wgpu::VertexFormat::Float32x3,
+            }],
         }
     }
 }
@@ -239,22 +242,26 @@ impl VertexTexCoord {
         wgpu::VertexBufferLayout {
             array_stride: mem::size_of::<Self>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[
-                wgpu::VertexAttribute {
-                    offset: 0,
-                    shader_location: 2,
-                    format: wgpu::VertexFormat::Float32x2,
-                },
-            ]
+            attributes: &[wgpu::VertexAttribute {
+                offset: 0,
+                shader_location: 2,
+                format: wgpu::VertexFormat::Float32x2,
+            }],
         }
     }
 }
 
 impl Engine {
-    pub async fn new(device: &wgpu::Device, queue: &wgpu::Queue, width: u32, height: u32, target_format: wgpu::TextureFormat) -> Self {
-        let node_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
+    pub async fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        width: u32,
+        height: u32,
+        target_format: wgpu::TextureFormat,
+    ) -> Self {
+        let node_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::VERTEX,
                     ty: wgpu::BindingType::Buffer {
@@ -263,42 +270,42 @@ impl Engine {
                         min_binding_size: None,
                     },
                     count: None,
-                }
-            ],
-            label: Some("node_bind_group_layout"),
-        });
+                }],
+                label: Some("node_bind_group_layout"),
+            });
 
-        let material_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+        let material_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        multisampled: false,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-            label: Some("material_bind_group_layout"),
-        });
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+                label: Some("material_bind_group_layout"),
+            });
 
         // TODO: main 으로 빼기
         let gltf_root = {
@@ -312,15 +319,19 @@ impl Engine {
         };
 
         let white_image = image_util::white_image();
-        let white_texture = texture::Texture::from_image(&device, &queue, &white_image, Some("White")).unwrap();
+        let white_texture =
+            texture::Texture::from_image(&device, &queue, &white_image, Some("White")).unwrap();
 
-        let model_root = import::import_gltf(&gltf_root, &import::WgpuDeps {
-            device: &device,
-            queue: &queue,
-            node_uniform_layout: &node_bind_group_layout,
-            material_uniform_layout: &material_bind_group_layout,
-            white_texture: &white_texture,
-        });
+        let model_root = import::import_gltf(
+            &gltf_root,
+            &import::WgpuDeps {
+                device: &device,
+                queue: &queue,
+                node_uniform_layout: &node_bind_group_layout,
+                material_uniform_layout: &material_bind_group_layout,
+                white_texture: &white_texture,
+            },
+        );
 
         let camera = camera::Camera::new((0.0, 5.0, 10.0), cgmath::Deg(-90.0), cgmath::Deg(-20.0));
         let projection = camera::Projection::new(width, height, cgmath::Deg(45.0), 0.1, 100.0);
@@ -329,17 +340,15 @@ impl Engine {
         let mut camera_uniform = CameraUniform::new();
         camera_uniform.update_view_proj(&camera, &projection);
 
-        let camera_buffer = device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("Camera Buffer"),
-                contents: bytemuck::cast_slice(&[camera_uniform]),
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            }
-        );
+        let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Camera Buffer"),
+            contents: bytemuck::cast_slice(&[camera_uniform]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
 
-        let camera_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
+        let camera_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
@@ -348,26 +357,25 @@ impl Engine {
                         min_binding_size: None,
                     },
                     count: None,
-                }
-            ],
-            label: Some("camera_bind_group_layout"),
-        });
+                }],
+                label: Some("camera_bind_group_layout"),
+            });
 
         let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &camera_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: camera_buffer.as_entire_binding(),
-                }
-            ],
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: camera_buffer.as_entire_binding(),
+            }],
             label: Some("camera_bind_group"),
         });
 
         let shader = device.create_shader_module(include_wgsl!("shader.wgsl"));
 
-        let color_texture = texture::Texture::create_color_texture(&device, width, height, ENGINE_COLOR_LABEL);
-        let depth_texture = texture::Texture::create_depth_texture(&device, width, height, ENGINE_DEPTH_LABEL);
+        let color_texture =
+            texture::Texture::create_color_texture(&device, width, height, ENGINE_COLOR_LABEL);
+        let depth_texture =
+            texture::Texture::create_depth_texture(&device, width, height, ENGINE_DEPTH_LABEL);
 
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -429,7 +437,9 @@ impl Engine {
         });
 
         Self {
-            fly_cam_session: FlyCamSession { direction_session: None },
+            fly_cam_session: FlyCamSession {
+                direction_session: None,
+            },
             target_width: width,
             target_height: height,
             render_pipeline,
@@ -451,11 +461,14 @@ impl Engine {
     }
 
     pub fn resize(&mut self, width: u32, height: u32, device: &wgpu::Device) -> bool {
-        let changed = width > 0 && height > 0 && self.target_width != width && self.target_height != height;
+        let changed =
+            width > 0 && height > 0 && self.target_width != width && self.target_height != height;
         if changed {
             self.projection.resize(width, height);
-            self.color_texture = texture::Texture::create_color_texture(&device, width, height, ENGINE_COLOR_LABEL);
-            self.depth_texture = texture::Texture::create_depth_texture(&device, width, height, ENGINE_DEPTH_LABEL);
+            self.color_texture =
+                texture::Texture::create_color_texture(&device, width, height, ENGINE_COLOR_LABEL);
+            self.depth_texture =
+                texture::Texture::create_depth_texture(&device, width, height, ENGINE_DEPTH_LABEL);
             self.target_width = width;
             self.target_height = height;
         }
@@ -468,7 +481,8 @@ impl Engine {
 
     // TODO: eframe 대응
     pub fn input(&mut self, event: &InputEvent) -> bool {
-        self.fly_cam_session.handle_input(event, &mut self.camera_controller)
+        self.fly_cam_session
+            .handle_input(event, &mut self.camera_controller)
     }
 
     pub fn update(&mut self, queue: &wgpu::Queue) {
@@ -480,47 +494,63 @@ impl Engine {
             self.camera_controller.update_position(&mut self.camera, dt);
         }
 
-        self.camera_uniform.update_view_proj(&self.camera, &self.projection);
+        self.camera_uniform
+            .update_view_proj(&self.camera, &self.projection);
 
-        queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&[self.camera_uniform]));
+        queue.write_buffer(
+            &self.camera_buffer,
+            0,
+            bytemuck::cast_slice(&[self.camera_uniform]),
+        );
 
         self.pending_nodes.clear();
 
         {
             let mut node_stack: Vec<(&model::Node, Matrix4<f32>)> = Vec::new();
 
-            let scene = &self.model_root.scenes[self.model_root.default_scene_id];
-            for root_node_index in &scene.nodes {
-                node_stack.push((&self.model_root.nodes[*root_node_index], Matrix4::identity()));
+            let scene = self.model_root().default_scene();
+
+            for root_node_ids in &scene.nodes {
+                node_stack.push((&self.model_root.nodes[root_node_ids], Matrix4::identity()));
             }
 
             while let Some((node, upper_transform)) = node_stack.pop() {
                 // TODO: 매번 write_buffer 할 필요 없음
                 // TODO: cgmath::Matrix4 가 bytemuck 이랑 연동되면 좋을텐데 -> nalgebra?
-                let transform = upper_transform * node.transform;
-                let rs = Matrix3::from_cols(transform.x.truncate(), transform.y.truncate(), transform.z.truncate());
+                let transform = upper_transform * node.transform.matrix();
+                let rs = Matrix3::from_cols(
+                    transform.x.truncate(),
+                    transform.y.truncate(),
+                    transform.z.truncate(),
+                );
                 let node_uniform = NodeUniform {
                     model_mat: transform.into(),
                     normal_mat: Matrix4::from(rs.invert().unwrap().transpose()).into(),
                 };
-                queue.write_buffer(&node.uniform_buffer, 0, bytemuck::cast_slice(&[node_uniform]));
+                queue.write_buffer(
+                    &node.uniform_buffer,
+                    0,
+                    bytemuck::cast_slice(&[node_uniform]),
+                );
 
-                self.pending_nodes.push(node.gltf_index);
+                self.pending_nodes.push(node.id);
 
                 // visit children
-                for child_index in &node.children {
-                    let child = &self.model_root.nodes[*child_index];
+                for child_id in &node.children {
+                    let child = &self.model_root.nodes[child_id];
                     node_stack.push((child, transform))
                 }
             }
         }
     }
 
-    pub fn render(&mut self, device: &wgpu::Device) -> Result<wgpu::CommandBuffer, wgpu::SurfaceError> {
-        let mut encoder = device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Render Encoder"),
-            });
+    pub fn render(
+        &mut self,
+        device: &wgpu::Device,
+    ) -> Result<wgpu::CommandBuffer, wgpu::SurfaceError> {
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Render Encoder"),
+        });
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
@@ -550,19 +580,25 @@ impl Engine {
             render_pass.set_bind_group(1, &self.camera_bind_group, &[]);
 
             for node_id in &self.pending_nodes {
-                let node = &self.model_root.nodes[*node_id];
+                let node = &self.model_root.nodes[node_id];
 
-                if let Some(mesh_index) = node.mesh_index {
-                    let mesh = &self.model_root.meshes[mesh_index];
+                if let Some(mesh_id) = node.mesh_id {
+                    let mesh = &self.model_root.meshes[&mesh_id];
                     for primitive in mesh.primitives.iter() {
-                        if primitive.is_none() { continue; }
+                        if primitive.is_none() {
+                            continue;
+                        }
                         let primitive = primitive.as_ref().unwrap();
 
                         // TODO: default material
-                        let material_id = if let Some(id) = primitive.material_id { id } else { continue; };
-                        let material = &self.model_root.materials[material_id];
+                        let material_id = if let Some(id) = primitive.material_id {
+                            id
+                        } else {
+                            continue;
+                        };
+                        let material = &self.model_root.materials[&material_id];
 
-                        let model::MeshPrimitive {
+                        let mesh::MeshPrimitive {
                             position_buffer,
                             normal_buffer,
                             tex_coord_buffer,

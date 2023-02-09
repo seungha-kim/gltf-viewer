@@ -1,6 +1,6 @@
-use std::f32::consts::FRAC_PI_2;
-use cgmath::{InnerSpace, Matrix4, perspective, Point3, Rad, Vector3};
 use crate::AbstractKey;
+use cgmath::{perspective, InnerSpace, Matrix4, Point3, Rad, Vector3};
+use std::f32::consts::FRAC_PI_2;
 
 const SAFE_FRAC_PI_2: f32 = FRAC_PI_2 - 0.0001;
 
@@ -12,7 +12,6 @@ pub const OPENGL_TO_WGPU_MATRIX: Matrix4<f32> = Matrix4::new(
     0.0, 0.0, 0.5, 1.0,
 );
 
-
 #[derive(Debug)]
 pub struct Camera {
     pub position: Point3<f32>,
@@ -21,11 +20,7 @@ pub struct Camera {
 }
 
 impl Camera {
-    pub fn new<
-        V: Into<Point3<f32>>,
-        Y: Into<Rad<f32>>,
-        P: Into<Rad<f32>>,
-    >(
+    pub fn new<V: Into<Point3<f32>>, Y: Into<Rad<f32>>, P: Into<Rad<f32>>>(
         position: V,
         yaw: Y,
         pitch: P,
@@ -38,19 +33,11 @@ impl Camera {
     }
 
     pub fn front(&self) -> Vector3<f32> {
-        Vector3::new(
-            self.yaw.0.cos(),
-            self.pitch.0.sin(),
-            self.yaw.0.sin(),
-        ).normalize()
+        Vector3::new(self.yaw.0.cos(), self.pitch.0.sin(), self.yaw.0.sin()).normalize()
     }
 
     pub fn calc_matrix(&self) -> Matrix4<f32> {
-        Matrix4::look_to_rh(
-            self.position,
-            self.front(),
-            Vector3::unit_y(),
-        )
+        Matrix4::look_to_rh(self.position, self.front(), Vector3::unit_y())
     }
 }
 pub struct Projection {
@@ -61,13 +48,7 @@ pub struct Projection {
 }
 
 impl Projection {
-    pub fn new<F: Into<Rad<f32>>>(
-        width: u32,
-        height: u32,
-        fovy: F,
-        znear: f32,
-        zfar: f32,
-    ) -> Self {
+    pub fn new<F: Into<Rad<f32>>>(width: u32, height: u32, fovy: F, znear: f32, zfar: f32) -> Self {
         Self {
             aspect: width as f32 / height as f32,
             fovy: fovy.into(),
@@ -126,7 +107,7 @@ impl CameraController {
         self.amount_down = 0.0;
     }
 
-    pub fn process_keyboard(&mut self, key: AbstractKey, pressing: bool) -> bool{
+    pub fn process_keyboard(&mut self, key: AbstractKey, pressing: bool) -> bool {
         let amount = if pressing { 1.0 } else { 0.0 };
         match key {
             AbstractKey::CameraMoveForward => {
@@ -190,7 +171,8 @@ impl CameraController {
         camera.position += right * (self.amount_right - self.amount_left) * self.speed * dt;
 
         let (pitch_sin, pitch_cos) = camera.pitch.0.sin_cos();
-        let scrollward = Vector3::new(pitch_cos * yaw_cos, pitch_sin, pitch_cos * yaw_sin).normalize();
+        let scrollward =
+            Vector3::new(pitch_cos * yaw_cos, pitch_sin, pitch_cos * yaw_sin).normalize();
         camera.position += scrollward * self.scroll * self.speed * self.sensitivity * dt;
         self.scroll = 0.0;
 

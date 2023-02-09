@@ -1,12 +1,13 @@
-use std::sync::Arc;
-use eframe::egui;
-use gltf_engine::{AbstractKey, Engine, InputEvent};
-use crate::model::TodoListModel;
-use crate::PaintResource;
 use crate::command::TodoListCommand;
+use crate::model::TodoListModel;
 use crate::ui::framework::*;
 use crate::ui::todo_list::{TodoListContext, TodoListViewState};
 use crate::undo_manager::UndoManager;
+use crate::PaintResource;
+use eframe::egui;
+use gltf_engine::{AbstractKey, Engine, InputEvent};
+use std::sync::Arc;
+use uuid::Uuid;
 
 pub enum WorkspaceKind {
     Layout(LayoutWorkspace),
@@ -15,7 +16,7 @@ pub enum WorkspaceKind {
 }
 
 pub struct LayoutWorkspace {
-    node_selection: Option<usize>, // TODO: multiple selection
+    node_selection: Option<Uuid>, // TODO: multiple selection
 }
 
 impl LayoutWorkspace {
@@ -54,7 +55,7 @@ pub enum RootViewEvent {
     InputEvent(InputEvent),
     ChangeWorkspace(WorkspaceKind),
     ExitRequested,
-    SingleNodeSelected(usize),
+    SingleNodeSelected(Uuid),
 }
 
 impl<C: RootViewContext> ViewState<(), C> for RootViewState {
@@ -102,9 +103,10 @@ impl<C: RootViewContext> ViewState<(), C> for RootViewState {
                         continue;
                     }
                 }
-                egui::Event::Scroll(vec) => {
-                    InputEvent::MouseWheel { delta_x: vec.x, delta_y: vec.y }
-                }
+                egui::Event::Scroll(vec) => InputEvent::MouseWheel {
+                    delta_x: vec.x,
+                    delta_y: vec.y,
+                },
                 _ => continue,
             };
             {
@@ -154,13 +156,20 @@ impl RootViewState {
         egui::TopBottomPanel::top("my_panel").show(ui.ctx(), |ui| {
             ui.horizontal(|ui| {
                 if ui.selectable_label(is_layout, "Layout").clicked() && !is_layout {
-                    self.events.push(RootViewEvent::ChangeWorkspace(WorkspaceKind::Layout(LayoutWorkspace::new())));
+                    self.events
+                        .push(RootViewEvent::ChangeWorkspace(WorkspaceKind::Layout(
+                            LayoutWorkspace::new(),
+                        )));
                 }
                 if ui.selectable_label(is_todo_list, "TodoList").clicked() && !is_todo_list {
-                    self.events.push(RootViewEvent::ChangeWorkspace(WorkspaceKind::TodoList(TodoListViewState::new())));
+                    self.events
+                        .push(RootViewEvent::ChangeWorkspace(WorkspaceKind::TodoList(
+                            TodoListViewState::new(),
+                        )));
                 }
                 if ui.selectable_label(is_hello_world, "Hello World").clicked() && !is_hello_world {
-                    self.events.push(RootViewEvent::ChangeWorkspace(WorkspaceKind::HelloWorld));
+                    self.events
+                        .push(RootViewEvent::ChangeWorkspace(WorkspaceKind::HelloWorld));
                 }
             });
         });
@@ -180,7 +189,7 @@ impl RootViewState {
                 .auto_shrink([false; 2])
                 .show(ui, |ui| {
                     let model_root = ctx.engine().model_root();
-                    let scene = &model_root.scenes[model_root.default_scene_id];
+                    let scene = &model_root.default_scene();
                     for &node_id in scene.nodes.iter() {
                         self.rec_node(ui, ctx, node_id);
                     }
@@ -188,28 +197,28 @@ impl RootViewState {
         });
     }
 
-    fn rec_node<C: RootViewContext>(&mut self, ui: &mut egui::Ui, ctx: &C, node_id: usize) {
+    fn rec_node<C: RootViewContext>(&mut self, ui: &mut egui::Ui, ctx: &C, node_id: Uuid) {
         let WorkspaceKind::Layout(ref state) = self.workspace else {
             panic!("function must be called in layout workspace");
         };
         let model_root = ctx.engine().model_root();
-        let node = &model_root.nodes[node_id];
+        let node = &model_root.nodes[&node_id];
 
-        let id_string = format!("Node {}", node.gltf_index);
+        let id_string = format!("Node {}", node.id);
         let id = ui.make_persistent_id(&id_string);
         if node.children.is_empty() {
             ui.horizontal(|ui| {
-                let selected = state.node_selection.map(|s| s == node.gltf_index).unwrap_or(false);
+                let selected = state.node_selection.map(|s| s == node.id).unwrap_or(false);
                 if ui.selectable_label(selected, &id_string).clicked() {
-                    self.events.push(RootViewEvent::SingleNodeSelected(node.gltf_index));
+                    self.events.push(RootViewEvent::SingleNodeSelected(node.id));
                 };
             });
         } else {
             egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
                 .show_header(ui, |ui| {
-                    let selected = state.node_selection.map(|s| s == node.gltf_index).unwrap_or(false);
+                    let selected = state.node_selection.map(|s| s == node.id).unwrap_or(false);
                     if ui.selectable_label(selected, &id_string).clicked() {
-                        self.events.push(RootViewEvent::SingleNodeSelected(node.gltf_index));
+                        self.events.push(RootViewEvent::SingleNodeSelected(node.id));
                     }
                 })
                 .body(|ui| {
@@ -221,17 +230,15 @@ impl RootViewState {
     }
 
     fn right_panel<C: RootViewContext>(&mut self, ui: &mut egui::Ui, ctx: &C) {
-        egui::SidePanel::right("my_right_panel").show(ui.ctx(), |ui| {
-            match &self.workspace {
-                WorkspaceKind::Layout(_) => {
-                    self.property_panel(ui, ctx);
-                }
-                WorkspaceKind::TodoList(_) => {
-                    self.todo_list(ui, ctx);
-                },
-                WorkspaceKind::HelloWorld => {
-                    ui.label("Hello World!");
-                },
+        egui::SidePanel::right("my_right_panel").show(ui.ctx(), |ui| match &self.workspace {
+            WorkspaceKind::Layout(_) => {
+                self.property_panel(ui, ctx);
+            }
+            WorkspaceKind::TodoList(_) => {
+                self.todo_list(ui, ctx);
+            }
+            WorkspaceKind::HelloWorld => {
+                ui.label("Hello World!");
             }
         });
     }
@@ -239,9 +246,31 @@ impl RootViewState {
     fn property_panel<C: RootViewContext>(&mut self, ui: &mut egui::Ui, ctx: &C) {
         if let WorkspaceKind::Layout(ref state) = self.workspace {
             if let Some(node_id) = state.node_selection {
-                let node = &ctx.engine().model_root().nodes[node_id];
+                let node = &ctx.engine().model_root().nodes[&node_id];
                 ui.label(format!("Node {node_id}"));
                 ui.label(format!("Children: {}", node.children.len()));
+                ui.separator();
+                ui.label("Position");
+                ui.horizontal(|ui| {
+                    let mut x = node.transform.position.x;
+                    let mut y = node.transform.position.y;
+                    let mut z = node.transform.position.x;
+                    ui.add(egui::widgets::DragValue::new(&mut x));
+                    ui.add(egui::widgets::DragValue::new(&mut y));
+                    ui.add(egui::widgets::DragValue::new(&mut z));
+                });
+                ui.separator();
+                ui.label("Rotation (TODO)");
+                ui.separator();
+                ui.label("Scale");
+                ui.horizontal(|ui| {
+                    let mut x = node.transform.scale.x;
+                    let mut y = node.transform.scale.y;
+                    let mut z = node.transform.scale.x;
+                    ui.add(egui::widgets::DragValue::new(&mut x));
+                    ui.add(egui::widgets::DragValue::new(&mut y));
+                    ui.add(egui::widgets::DragValue::new(&mut z));
+                });
             }
         }
     }
@@ -254,15 +283,16 @@ impl RootViewState {
         let mut model_commands = Vec::new();
 
         let (undo, redo, exit) = {
-            let mut ctx = TodoListContextImpl::new(
-                &self.todo_list,
-                &self.undo_manager,
-                &mut model_commands,
-            );
+            let mut ctx =
+                TodoListContextImpl::new(&self.todo_list, &self.undo_manager, &mut model_commands);
 
             view_state.update(ui, &mut ctx);
 
-            (ctx.undo_requested(), ctx.redo_requested(), ctx.exit_requested())
+            (
+                ctx.undo_requested(),
+                ctx.redo_requested(),
+                ctx.exit_requested(),
+            )
         };
 
         if undo {
@@ -276,7 +306,8 @@ impl RootViewState {
         }
 
         for c in model_commands {
-            self.undo_manager.push_undo(self.todo_list.process_command(c));
+            self.undo_manager
+                .push_undo(self.todo_list.process_command(c));
         }
     }
 
@@ -297,10 +328,12 @@ impl RootViewState {
                 .show(ui, move |ui| {
                     egui::Frame::canvas(ui.style()).show(ui, |ui| {
                         let response = self.custom_painting(ui);
-                        if response.drag_started() && response.dragged_by(egui::PointerButton::Secondary) {
-                            self.events.push(RootViewEvent::InputEvent(InputEvent::MouseRightDown));
+                        if response.drag_started()
+                            && response.dragged_by(egui::PointerButton::Secondary)
+                        {
+                            self.events
+                                .push(RootViewEvent::InputEvent(InputEvent::MouseRightDown));
                             ui.output().cursor_icon = egui::CursorIcon::Move;
-
                         }
                         // NOTE: egui::Response::drag_released 로 처리하면,
                         // 포인터가 창 밖으로 벗어난 채로 버튼을 떼었을 때 이벤트가 발생하지 않는 문제가 있어서
@@ -308,9 +341,14 @@ impl RootViewState {
                         // if response.drag_released() {
                         //     self.engine.input(&InputEvent::MouseRightUp);
                         // }
-                        if response.dragged() && response.dragged_by(egui::PointerButton::Secondary) {
+                        if response.dragged() && response.dragged_by(egui::PointerButton::Secondary)
+                        {
                             let delta = response.drag_delta() / 2.0; // FIXME: device pixel ratio?
-                            self.events.push(RootViewEvent::InputEvent(InputEvent::MouseMove { delta_x: delta.x, delta_y: delta.y }));
+                            self.events
+                                .push(RootViewEvent::InputEvent(InputEvent::MouseMove {
+                                    delta_x: delta.x,
+                                    delta_y: delta.y,
+                                }));
                             ui.output().cursor_icon = egui::CursorIcon::Move;
                         }
                     });
@@ -321,15 +359,20 @@ impl RootViewState {
     fn custom_painting(&mut self, ui: &mut egui::Ui) -> egui::Response {
         let available = ui.available_rect_before_wrap();
         // TODO: scale factor
-        let (rect, response) =
-            ui.allocate_at_least(egui::Vec2::new(available.width(), available.height()), egui::Sense::drag());
+        let (rect, response) = ui.allocate_at_least(
+            egui::Vec2::new(available.width(), available.height()),
+            egui::Sense::drag(),
+        );
 
         let cb = egui_wgpu::CallbackFn::new()
             .prepare(move |device, queue, _encoder, resource| {
                 let resource: &mut PaintResource = resource.get_mut().unwrap();
 
                 let physical_size = rect.size() * rect.aspect_ratio();
-                let changed = resource.engine.resize(physical_size.x as u32, physical_size.y as u32, device);
+                let changed =
+                    resource
+                        .engine
+                        .resize(physical_size.x as u32, physical_size.y as u32, device);
                 if changed {
                     resource.update_bind_group(device);
                 }

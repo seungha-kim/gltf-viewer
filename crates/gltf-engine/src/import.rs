@@ -1,6 +1,11 @@
-use crate::{MaterialUniform, model, NodeUniform};
-use wgpu::util::DeviceExt;
+use crate::mesh::*;
+use crate::model::*;
 use crate::texture;
+use crate::*;
+use crate::{MaterialUniform, NodeUniform};
+use std::collections::HashMap;
+use uuid::Uuid;
+use wgpu::util::DeviceExt;
 
 pub struct GltfRoot {
     pub document: gltf::Document,
@@ -16,34 +21,53 @@ pub struct WgpuDeps<'a> {
     pub white_texture: &'a texture::Texture,
 }
 
-pub fn import_gltf(root: &GltfRoot, deps: &WgpuDeps) -> model::ImportedGltf {
+pub fn import_gltf(root: &GltfRoot, deps: &WgpuDeps) -> ImportedGltf {
     let document = &root.document;
+
+    let materials: HashMap<Uuid, Material> = document
+        .materials()
+        .map(|m| import_material(m, deps))
+        .map(|m| (m.id, m))
+        .collect();
+
+    let material_ids: HashMap<usize, Uuid> =
+        materials.values().map(|m| (m.gltf_index(), m.id)).collect();
+
+    let meshes: HashMap<Uuid, Mesh> = document
+        .meshes()
+        .map(|mesh| import_mesh(mesh, root, deps, &material_ids))
+        .map(|mesh| (mesh.id, mesh))
+        .collect();
+
+    let mesh_ids: HashMap<usize, Uuid> = meshes.values().map(|m| (m.gltf_index(), m.id)).collect();
+
+    let node_ids: HashMap<usize, Uuid> = root
+        .document
+        .nodes()
+        .map(|n| (n.index(), Uuid::new_v4()))
+        .collect();
+
+    let nodes: HashMap<Uuid, Node> = document
+        .nodes()
+        .map(|n| import_node(n, deps, &mesh_ids, &node_ids))
+        .map(|n| (n.id, n))
+        .collect();
+
+    let scenes: HashMap<Uuid, Scene> = document
+        .scenes()
+        .map(|scene| import_scene(scene, &node_ids))
+        .map(|s| (s.id, s))
+        .collect();
+
+    let scene_ids: HashMap<usize, Uuid> = scenes.values().map(|s| (s.gltf_index(), s.id)).collect();
 
     let default_scene_id = document
         .default_scene()
-        .map(|scene| scene.index())
-        .unwrap_or(0);
-
-    let scenes = document
-        .scenes()
-        .map(import_scene)
-        .collect();
-
-    let nodes = document
-        .nodes()
-        .map(|n| import_node(n, deps))
-        .collect();
-
-    let meshes = document
-        .meshes()
-        .map(|mesh| import_mesh(mesh, root, deps))
-        .collect();
+        .map(|scene| scene_ids[&scene.index()]);
 
     // TODO: texture, sampler
 
-    let materials = document.materials().map(|m| import_material(m, deps)).collect();
-
-    model::ImportedGltf {
+    ImportedGltf {
         default_scene_id,
         scenes,
         nodes,
@@ -52,16 +76,26 @@ pub fn import_gltf(root: &GltfRoot, deps: &WgpuDeps) -> model::ImportedGltf {
     }
 }
 
-fn import_scene(scene: gltf::Scene) -> model::Scene {
-    let gltf_index = scene.index();
+fn import_scene(scene: gltf::Scene, node_ids: &HashMap<usize, Uuid>) -> Scene {
     let mut nodes = Vec::new();
     for root_node in scene.nodes() {
-        nodes.push(root_node.index());
+        nodes.push(node_ids[&root_node.index()]);
     }
-    model::Scene { gltf_index, nodes }
+    Scene {
+        id: Uuid::new_v4(),
+        nodes,
+        source_info: SceneSourceInfo::Gltf {
+            index: scene.index(),
+        },
+    }
 }
 
-fn import_node(node: gltf::Node, deps: &WgpuDeps) -> model::Node {
+fn import_node(
+    node: gltf::Node,
+    deps: &WgpuDeps,
+    mesh_ids: &HashMap<usize, Uuid>,
+    node_ids: &HashMap<usize, Uuid>,
+) -> Node {
     let transform = import_transform(node.transform());
 
     let uniform_buffer = deps.device.create_buffer(&wgpu::BufferDescriptor {
@@ -73,43 +107,72 @@ fn import_node(node: gltf::Node, deps: &WgpuDeps) -> model::Node {
 
     let uniform_bind_group = deps.device.create_bind_group(&wgpu::BindGroupDescriptor {
         layout: &deps.node_uniform_layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: uniform_buffer.as_entire_binding(),
-            }
-        ],
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: uniform_buffer.as_entire_binding(),
+        }],
         label: Some("primitive_transform_bind_group"),
     });
 
-    model::Node {
-        gltf_index: node.index(),
+    Node {
+        id: node_ids[&node.index()],
         transform,
-        children: node.children().map(|child| child.index()).collect(),
-        mesh_index: node.mesh().map(|m| m.index()),
+        children: node
+            .children()
+            .map(|child| node_ids[&child.index()])
+            .collect(),
+        mesh_id: node.mesh().map(|m| mesh_ids[&m.index()]),
         uniform_buffer,
         uniform_bind_group,
+        source_info: NodeSourceInfo::Gltf {
+            index: node.index(),
+        },
     }
 }
 
-fn import_transform(transform: gltf::scene::Transform) -> cgmath::Matrix4<f32> {
-    use gltf::scene::Transform;
+fn import_transform(transform: gltf::scene::Transform) -> NodeTransform {
+    use gltf::scene::Transform as G;
     match transform {
-        Transform::Matrix { matrix } => matrix.into(),
-        Transform::Decomposed {
+        G::Matrix { matrix } => {
+            let mat4 = cgmath::Matrix4::from(matrix);
+            let position_arr: [f32; 3] = [mat4.w.x, mat4.w.y, mat4.w.z];
+            let position = Vector3::from(position_arr);
+
+            let mut mat3 =
+                Matrix3::from_cols(mat4.x.truncate(), mat4.y.truncate(), mat4.z.truncate());
+            let mut scale =
+                Vector3::new(mat3.x.magnitude(), mat3.y.magnitude(), mat3.z.magnitude());
+
+            mat3.x /= scale.x;
+            mat3.y /= scale.y;
+            mat3.z /= scale.z;
+
+            if mat3.determinant() < 0.0 {
+                mat3 = -mat3;
+                scale = -scale;
+            }
+
+            let rotation = cgmath::Quaternion::from(mat3);
+
+            NodeTransform {
+                position,
+                rotation,
+                scale,
+            }
+        }
+        G::Decomposed {
             translation,
             rotation,
             scale,
-        } => {
-            let translation_mat = cgmath::Matrix4::from_translation(translation.into());
-            let rotation_mat: cgmath::Matrix4<f32> = cgmath::Quaternion::from(rotation).into();
-            let scale_mat = cgmath::Matrix4::from_nonuniform_scale(scale[0], scale[1], scale[2]);
-            translation_mat * rotation_mat * scale_mat
-        }
+        } => NodeTransform {
+            position: translation.into(),
+            rotation: rotation.into(),
+            scale: scale.into(),
+        },
     }
 }
 
-fn import_material(material: gltf::Material, deps: &WgpuDeps) -> model::Material {
+fn import_material(material: gltf::Material, deps: &WgpuDeps) -> Material {
     if material.double_sided() {
         log::warn!("Double sided material found");
     }
@@ -145,29 +208,46 @@ fn import_material(material: gltf::Material, deps: &WgpuDeps) -> model::Material
                 binding: 2,
                 // TODO: imported sampler
                 resource: wgpu::BindingResource::Sampler(&deps.white_texture.sampler),
-            }
+            },
         ],
         label: Some("material_bind_group"),
     });
 
-    deps.queue.write_buffer(&uniform_buffer, 0, bytemuck::cast_slice(&[material_uniform]));
+    deps.queue.write_buffer(
+        &uniform_buffer,
+        0,
+        bytemuck::cast_slice(&[material_uniform]),
+    );
 
-    model::Material {
-        gltf_index: material.index().unwrap(),
+    let source_info = MaterialSourceInfo::Gltf {
+        index: material.index().unwrap(),
+    };
+
+    Material {
+        id: Uuid::new_v4(),
         base_color_factor,
         emissive_factor,
         material_bind_group,
         uniform_buffer,
+        source_info,
     }
 }
 
-fn import_mesh(mesh: gltf::Mesh, root: &GltfRoot, deps: &WgpuDeps) -> model::Mesh {
-    model::Mesh {
-        gltf_index: mesh.index(),
+fn import_mesh(
+    mesh: gltf::Mesh,
+    root: &GltfRoot,
+    deps: &WgpuDeps,
+    material_ids: &HashMap<usize, Uuid>,
+) -> Mesh {
+    Mesh {
+        id: Uuid::new_v4(),
         primitives: mesh
             .primitives()
-            .map(|p| import_primitive(p, root, deps))
+            .map(|p| import_primitive(p, root, deps, material_ids))
             .collect(),
+        source_info: MeshSourceInfo::Gltf {
+            index: mesh.index(),
+        },
     }
 }
 
@@ -175,7 +255,8 @@ fn import_primitive(
     primitive: gltf::Primitive,
     root: &GltfRoot,
     deps: &WgpuDeps,
-) -> Option<model::MeshPrimitive> {
+    material_ids: &HashMap<usize, Uuid>,
+) -> Option<MeshPrimitive> {
     use gltf::mesh::*;
 
     let index = primitive.index();
@@ -193,15 +274,20 @@ fn import_primitive(
         None,
         "Vertex Index",
         wgpu::BufferUsages::INDEX,
-    ).expect("Failed to get index buffer");
+    )
+    .expect("Failed to get index buffer");
     let index_format = match index_size {
         2 => wgpu::IndexFormat::Uint16,
         4 => wgpu::IndexFormat::Uint32,
         _ => panic!("Unsupported index format"),
     };
 
-    let position_acc = primitive.get(&Semantic::Positions).expect("Failed to get position accessor");
-    let normal_acc = primitive.get(&Semantic::Normals).expect("Failed to get normal accessor");
+    let position_acc = primitive
+        .get(&Semantic::Positions)
+        .expect("Failed to get position accessor");
+    let normal_acc = primitive
+        .get(&Semantic::Normals)
+        .expect("Failed to get normal accessor");
     let tex_coord_acc = primitive.get(&Semantic::TexCoords(0));
 
     let vertex_count = position_acc.count();
@@ -213,7 +299,9 @@ fn import_primitive(
         Some(12),
         "Vertex Position",
         wgpu::BufferUsages::VERTEX,
-    ).unwrap().0;
+    )
+    .unwrap()
+    .0;
 
     let normal_buffer = import_buffer(
         &normal_acc,
@@ -222,29 +310,38 @@ fn import_primitive(
         Some(12),
         "Vertex Normal",
         wgpu::BufferUsages::VERTEX,
-    ).unwrap().0;
+    )
+    .unwrap()
+    .0;
 
-    let tex_coord_buffer = tex_coord_acc.map(|acc| import_buffer(
-        &acc,
-        root,
-        deps,
-        Some(8),
-        "Vertex Tex Coord",
-        wgpu::BufferUsages::VERTEX,
-    ).unwrap().0).unwrap_or_else(|| {
-        log::warn!("Creating null texture coordiates buffer");
-        create_null_texcoord_buffer(deps, vertex_count)
-    });
+    let tex_coord_buffer = tex_coord_acc
+        .map(|acc| {
+            import_buffer(
+                &acc,
+                root,
+                deps,
+                Some(8),
+                "Vertex Tex Coord",
+                wgpu::BufferUsages::VERTEX,
+            )
+            .unwrap()
+            .0
+        })
+        .unwrap_or_else(|| {
+            log::warn!("Creating null texture coordiates buffer");
+            create_null_texcoord_buffer(deps, vertex_count)
+        });
 
-    Some(model::MeshPrimitive {
-        gltf_index: index,
-        material_id: primitive.material().index(),
+    Some(MeshPrimitive {
+        id: Uuid::new_v4(),
+        material_id: primitive.material().index().map(|i| material_ids[&i]),
         position_buffer,
         normal_buffer,
         tex_coord_buffer,
         index_buffer,
         index_format,
         num_indices: index_acc.count(),
+        source_info: PrimitiveSourceInfo::Gltf { index: index },
     })
 }
 
@@ -256,7 +353,9 @@ fn import_buffer(
     label: &str,
     usage: wgpu::BufferUsages,
 ) -> Option<(wgpu::Buffer, usize)> {
-    let view = acc.view().expect("Failed to load buffer view from accessor");
+    let view = acc
+        .view()
+        .expect("Failed to load buffer view from accessor");
 
     let stride = view.stride().unwrap_or_else(|| acc.size());
     if let Some(assert_stride) = assert_stride {
@@ -269,27 +368,26 @@ fn import_buffer(
     let length = acc.size() * acc.count();
     let buffer = &root.buffers[view.buffer().index()].0;
     let slice = &buffer[offset..(offset + length)];
-    let wgpu_buffer = deps.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some(label),
-        contents: slice,
-        usage,
-    });
+    let wgpu_buffer = deps
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some(label),
+            contents: slice,
+            usage,
+        });
     Some((wgpu_buffer, stride))
 }
 
 // TODO: shader permutation or pipeline overridable constants
-fn create_null_texcoord_buffer(
-    deps: &WgpuDeps,
-    count: usize,
-) -> wgpu::Buffer {
+fn create_null_texcoord_buffer(deps: &WgpuDeps, count: usize) -> wgpu::Buffer {
     let mut data = Vec::new();
     data.resize(count * 2, 0.0f32);
-    let raw_data = unsafe {
-        std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * 4)
-    };
-    deps.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Null texture coordidates"),
-        contents: raw_data,
-        usage: wgpu::BufferUsages::VERTEX,
-    })
+    let raw_data =
+        unsafe { std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * 4) };
+    deps.device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Null texture coordidates"),
+            contents: raw_data,
+            usage: wgpu::BufferUsages::VERTEX,
+        })
 }
