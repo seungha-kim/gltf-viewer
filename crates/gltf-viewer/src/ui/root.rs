@@ -11,25 +11,14 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 pub enum WorkspaceKind {
-    Layout(LayoutWorkspace),
+    Layout,
     TodoList(TodoListViewState),
     HelloWorld,
 }
 
-pub struct LayoutWorkspace {
-    node_selection: NodeSelection,
-}
-
-impl LayoutWorkspace {
-    fn new() -> Self {
-        Self {
-            node_selection: NodeSelection::None,
-        }
-    }
-}
-
 pub struct RootViewState {
     workspace: WorkspaceKind,
+    node_selection: NodeSelection,
     undo_manager: UndoManager,
     todo_list: TodoListModel,
     events: Vec<RootViewEvent>,
@@ -39,7 +28,8 @@ pub struct RootViewState {
 impl RootViewState {
     pub fn new() -> RootViewState {
         Self {
-            workspace: WorkspaceKind::Layout(LayoutWorkspace::new()),
+            workspace: WorkspaceKind::Layout,
+            node_selection: NodeSelection::None,
             undo_manager: UndoManager::new(),
             todo_list: TodoListModel::default(),
             events: Vec::new(),
@@ -141,7 +131,7 @@ impl RootViewState {
         let mut is_todo_list = false;
         let mut is_hello_world = false;
         match &self.workspace {
-            WorkspaceKind::Layout(_) => is_layout = true,
+            WorkspaceKind::Layout => is_layout = true,
             WorkspaceKind::TodoList(_) => is_todo_list = true,
             WorkspaceKind::HelloWorld => is_hello_world = true,
         }
@@ -149,9 +139,7 @@ impl RootViewState {
             ui.horizontal(|ui| {
                 if ui.selectable_label(is_layout, "Layout").clicked() && !is_layout {
                     self.events
-                        .push(RootViewEvent::ChangeWorkspace(WorkspaceKind::Layout(
-                            LayoutWorkspace::new(),
-                        )));
+                        .push(RootViewEvent::ChangeWorkspace(WorkspaceKind::Layout));
                 }
                 if ui.selectable_label(is_todo_list, "TodoList").clicked() && !is_todo_list {
                     self.events
@@ -190,9 +178,6 @@ impl RootViewState {
     }
 
     fn rec_node<C: RootViewContext>(&mut self, ui: &mut egui::Ui, ctx: &C, node_id: Uuid) {
-        let WorkspaceKind::Layout(ref state) = self.workspace else {
-            panic!("function must be called in layout workspace");
-        };
         let model_root = ctx.engine_model().engine().model_root();
         let node = &model_root.nodes[&node_id];
 
@@ -200,7 +185,7 @@ impl RootViewState {
         let id = ui.make_persistent_id(&id_string);
         if node.children.is_empty() {
             ui.horizontal(|ui| {
-                let selected = state.node_selection.is_selected(node.id);
+                let selected = self.node_selection.is_selected(node.id);
                 if ui.selectable_label(selected, &id_string).clicked() {
                     self.events.push(RootViewEvent::SingleNodeSelected(node.id));
                 };
@@ -208,7 +193,7 @@ impl RootViewState {
         } else {
             egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
                 .show_header(ui, |ui| {
-                    let selected = state.node_selection.is_selected(node.id);
+                    let selected = self.node_selection.is_selected(node.id);
                     if ui.selectable_label(selected, &id_string).clicked() {
                         self.events.push(RootViewEvent::SingleNodeSelected(node.id));
                     }
@@ -224,7 +209,7 @@ impl RootViewState {
     fn right_panel<C: RootViewContext>(&mut self, ui: &mut egui::Ui, ctx: &C) {
         ui.set_min_width(200.0);
         egui::SidePanel::right("my_right_panel").show(ui.ctx(), |ui| match &self.workspace {
-            WorkspaceKind::Layout(_) => {
+            WorkspaceKind::Layout => {
                 self.property_panel(ui, ctx);
             }
             WorkspaceKind::TodoList(_) => {
@@ -237,17 +222,14 @@ impl RootViewState {
     }
 
     fn property_panel<C: RootViewContext>(&mut self, ui: &mut egui::Ui, ctx: &C) {
-        if let WorkspaceKind::Layout(ref mut state) = self.workspace {
-            if let NodeSelection::SingleSelection { id, property_view } = &mut state.node_selection
-            {
-                let mut context = NodePropertyViewContextImpl {
-                    node_id: *id,
-                    model: ctx.engine_model(),
-                    commands: Vec::new(),
-                };
-                property_view.update(ui, &mut context);
-                self.engine_commands.append(&mut context.commands);
-            }
+        if let NodeSelection::SingleSelection { id, property_view } = &mut self.node_selection {
+            let mut context = NodePropertyViewContextImpl {
+                node_id: *id,
+                model: ctx.engine_model(),
+                commands: Vec::new(),
+            };
+            property_view.update(ui, &mut context);
+            self.engine_commands.append(&mut context.commands);
         }
     }
 
@@ -386,12 +368,10 @@ impl RootViewState {
                 ctx.request_exit();
             }
             RootViewEvent::SingleNodeSelected(node_id) => {
-                if let WorkspaceKind::Layout(ref mut state) = self.workspace {
-                    state.node_selection = NodeSelection::SingleSelection {
-                        id: node_id,
-                        property_view: NodePropertyViewState::new(),
-                    };
-                }
+                self.node_selection = NodeSelection::SingleSelection {
+                    id: node_id,
+                    property_view: NodePropertyViewState::new(),
+                };
             }
         }
     }
