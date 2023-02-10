@@ -1,11 +1,12 @@
-use crate::command::TodoListCommand;
+use crate::command::{EngineCommand, EngineModel, TodoListCommand};
 use crate::model::TodoListModel;
 use crate::ui::framework::*;
+use crate::ui::node_property::{NodePropertyViewContext, NodePropertyViewState};
 use crate::ui::todo_list::{TodoListContext, TodoListViewState};
 use crate::undo_manager::UndoManager;
 use crate::PaintResource;
 use eframe::egui;
-use gltf_engine::{AbstractKey, Engine, InputEvent};
+use gltf_engine::{AbstractKey, InputEvent};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -16,13 +17,13 @@ pub enum WorkspaceKind {
 }
 
 pub struct LayoutWorkspace {
-    node_selection: Option<Uuid>, // TODO: multiple selection
+    node_selection: NodeSelection,
 }
 
 impl LayoutWorkspace {
     fn new() -> Self {
         Self {
-            node_selection: None,
+            node_selection: NodeSelection::None,
         }
     }
 }
@@ -32,6 +33,7 @@ pub struct RootViewState {
     undo_manager: UndoManager,
     todo_list: TodoListModel,
     events: Vec<RootViewEvent>,
+    engine_commands: Vec<EngineCommand>,
 }
 
 impl RootViewState {
@@ -41,13 +43,13 @@ impl RootViewState {
             undo_manager: UndoManager::new(),
             todo_list: TodoListModel::default(),
             events: Vec::new(),
+            engine_commands: Vec::new(),
         }
     }
 }
 
-pub trait RootViewContext: ViewContext<(), ()> {
-    fn engine_mut(&mut self) -> &mut Engine;
-    fn engine(&self) -> &Engine;
+pub trait RootViewContext: ViewContext<(), EngineCommand> {
+    fn engine_model(&self) -> &EngineModel;
     fn request_repaint(&mut self);
 }
 
@@ -59,10 +61,12 @@ pub enum RootViewEvent {
 }
 
 impl<C: RootViewContext> ViewState<(), C> for RootViewState {
-    type Command = ();
-    type Event = RootViewEvent;
+    type Command = EngineCommand;
 
-    fn interact(&mut self, ui: &mut egui::Ui, ctx: &C) -> Vec<Self::Event> {
+    fn interact(&mut self, ui: &mut egui::Ui, ctx: &C) {
+        assert_eq!(self.engine_commands.len(), 0);
+        assert_eq!(self.events.len(), 0);
+
         ui.ctx().set_visuals(egui::Visuals::light());
         if !ui.ctx().input().keys_down.is_empty() {
             ui.ctx().request_repaint();
@@ -119,26 +123,14 @@ impl<C: RootViewContext> ViewState<(), C> for RootViewState {
         self.left_panel(ui, ctx);
         self.right_panel(ui, ctx);
         self.central_panel(ui, ctx);
-
-        std::mem::take(&mut self.events)
     }
 
-    fn handle_view_event(&mut self, ctx: &mut C, event: Self::Event) {
-        match event {
-            RootViewEvent::InputEvent(input_event) => {
-                ctx.engine_mut().input(&input_event);
-            }
-            RootViewEvent::ChangeWorkspace(workspace) => {
-                self.workspace = workspace;
-            }
-            RootViewEvent::ExitRequested => {
-                ctx.request_exit();
-            }
-            RootViewEvent::SingleNodeSelected(node_id) => {
-                if let WorkspaceKind::Layout(ref mut state) = self.workspace {
-                    state.node_selection = Some(node_id);
-                }
-            }
+    fn mutate(&mut self, ctx: &mut C) {
+        for c in std::mem::take(&mut self.engine_commands) {
+            ctx.push_command(c);
+        }
+        for e in std::mem::take(&mut self.events) {
+            self.handle_event(ctx, e);
         }
     }
 }
@@ -188,7 +180,7 @@ impl RootViewState {
             egui::ScrollArea::vertical()
                 .auto_shrink([false; 2])
                 .show(ui, |ui| {
-                    let model_root = ctx.engine().model_root();
+                    let model_root = ctx.engine_model().engine().model_root();
                     let scene = &model_root.default_scene();
                     for &node_id in scene.nodes.iter() {
                         self.rec_node(ui, ctx, node_id);
@@ -201,14 +193,14 @@ impl RootViewState {
         let WorkspaceKind::Layout(ref state) = self.workspace else {
             panic!("function must be called in layout workspace");
         };
-        let model_root = ctx.engine().model_root();
+        let model_root = ctx.engine_model().engine().model_root();
         let node = &model_root.nodes[&node_id];
 
         let id_string = format!("Node {}", node.abbreviated_id());
         let id = ui.make_persistent_id(&id_string);
         if node.children.is_empty() {
             ui.horizontal(|ui| {
-                let selected = state.node_selection.map(|s| s == node.id).unwrap_or(false);
+                let selected = state.node_selection.is_selected(node.id);
                 if ui.selectable_label(selected, &id_string).clicked() {
                     self.events.push(RootViewEvent::SingleNodeSelected(node.id));
                 };
@@ -216,7 +208,7 @@ impl RootViewState {
         } else {
             egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
                 .show_header(ui, |ui| {
-                    let selected = state.node_selection.map(|s| s == node.id).unwrap_or(false);
+                    let selected = state.node_selection.is_selected(node.id);
                     if ui.selectable_label(selected, &id_string).clicked() {
                         self.events.push(RootViewEvent::SingleNodeSelected(node.id));
                     }
@@ -230,6 +222,7 @@ impl RootViewState {
     }
 
     fn right_panel<C: RootViewContext>(&mut self, ui: &mut egui::Ui, ctx: &C) {
+        ui.set_min_width(200.0);
         egui::SidePanel::right("my_right_panel").show(ui.ctx(), |ui| match &self.workspace {
             WorkspaceKind::Layout(_) => {
                 self.property_panel(ui, ctx);
@@ -244,34 +237,16 @@ impl RootViewState {
     }
 
     fn property_panel<C: RootViewContext>(&mut self, ui: &mut egui::Ui, ctx: &C) {
-        ui.set_min_width(200.0);
-        if let WorkspaceKind::Layout(ref state) = self.workspace {
-            if let Some(node_id) = state.node_selection {
-                let node = &ctx.engine().model_root().nodes[&node_id];
-                ui.label(format!("Node {}", node.abbreviated_id()));
-                ui.label(format!("Children: {}", node.children.len()));
-                ui.separator();
-                ui.label("Position");
-                ui.horizontal(|ui| {
-                    let mut x = node.transform.position.x;
-                    let mut y = node.transform.position.y;
-                    let mut z = node.transform.position.x;
-                    ui.add(egui::widgets::DragValue::new(&mut x));
-                    ui.add(egui::widgets::DragValue::new(&mut y));
-                    ui.add(egui::widgets::DragValue::new(&mut z));
-                });
-                ui.separator();
-                ui.label("Rotation (TODO)");
-                ui.separator();
-                ui.label("Scale");
-                ui.horizontal(|ui| {
-                    let mut x = node.transform.scale.x;
-                    let mut y = node.transform.scale.y;
-                    let mut z = node.transform.scale.x;
-                    ui.add(egui::widgets::DragValue::new(&mut x));
-                    ui.add(egui::widgets::DragValue::new(&mut y));
-                    ui.add(egui::widgets::DragValue::new(&mut z));
-                });
+        if let WorkspaceKind::Layout(ref mut state) = self.workspace {
+            if let NodeSelection::SingleSelection { id, property_view } = &mut state.node_selection
+            {
+                let mut context = NodePropertyViewContextImpl {
+                    node_id: *id,
+                    model: ctx.engine_model(),
+                    commands: Vec::new(),
+                };
+                property_view.update(ui, &mut context);
+                self.engine_commands.append(&mut context.commands);
             }
         }
     }
@@ -398,6 +373,28 @@ impl RootViewState {
 
         response
     }
+
+    fn handle_event<C: RootViewContext>(&mut self, ctx: &mut C, event: RootViewEvent) {
+        match event {
+            RootViewEvent::InputEvent(input_event) => {
+                ctx.push_command(EngineCommand::InputEvent(input_event));
+            }
+            RootViewEvent::ChangeWorkspace(workspace) => {
+                self.workspace = workspace;
+            }
+            RootViewEvent::ExitRequested => {
+                ctx.request_exit();
+            }
+            RootViewEvent::SingleNodeSelected(node_id) => {
+                if let WorkspaceKind::Layout(ref mut state) = self.workspace {
+                    state.node_selection = NodeSelection::SingleSelection {
+                        id: node_id,
+                        property_view: NodePropertyViewState::new(),
+                    };
+                }
+            }
+        }
+    }
 }
 
 pub struct TodoListContextImpl<'a> {
@@ -471,3 +468,51 @@ impl UndoableViewContext for TodoListContextImpl<'_> {
 }
 
 impl<'a> TodoListContext for TodoListContextImpl<'a> {}
+
+struct NodePropertyViewContextImpl<'a> {
+    node_id: Uuid,
+    model: &'a EngineModel<'a>,
+    commands: Vec<EngineCommand>,
+}
+
+impl<'a> ViewContext<EngineModel<'a>, EngineCommand> for NodePropertyViewContextImpl<'a> {
+    fn model(&self) -> &EngineModel<'a> {
+        &self.model
+    }
+
+    fn push_command(&mut self, command: EngineCommand) {
+        self.commands.push(command)
+    }
+
+    fn exit_requested(&self) -> bool {
+        todo!()
+    }
+
+    fn request_exit(&mut self) {
+        todo!()
+    }
+}
+
+impl<'a> NodePropertyViewContext<'a> for NodePropertyViewContextImpl<'a> {
+    fn node_id(&self) -> Uuid {
+        self.node_id
+    }
+}
+
+enum NodeSelection {
+    None,
+    SingleSelection {
+        id: Uuid,
+        property_view: NodePropertyViewState,
+    },
+}
+
+impl NodeSelection {
+    fn is_selected(&self, node_id: Uuid) -> bool {
+        if let NodeSelection::SingleSelection { id, .. } = self {
+            *id == node_id
+        } else {
+            false
+        }
+    }
+}

@@ -35,9 +35,8 @@ pub trait TodoListContext: ViewContext<TodoListModel, TodoListCommand> + Undoabl
 
 impl<C: TodoListContext> ViewState<TodoListModel, C> for TodoListViewState {
     type Command = TodoListCommand;
-    type Event = TodoListViewEvent;
 
-    fn interact(&mut self, ui: &mut egui::Ui, ctx: &C) -> Vec<Self::Event> {
+    fn interact(&mut self, ui: &mut egui::Ui, ctx: &C) {
         ui.heading("To-do List");
         if ui.add_enabled(ctx.can_undo(), egui::widgets::Button::new("Undo")).clicked() {
             self.events.push(TodoListViewEvent::UndoRequested);
@@ -56,47 +55,11 @@ impl<C: TodoListContext> ViewState<TodoListModel, C> for TodoListViewState {
         } else if input.modifiers.command && input.key_pressed(egui::Key::Z) {
             self.events.push(TodoListViewEvent::UndoRequested);
         }
-
-        std::mem::take(&mut self.events)
     }
 
-    fn handle_view_event(&mut self, ctx: &mut C, event: Self::Event) {
-        match event {
-            TodoListViewEvent::TodoItemCreated => {
-                let title = std::mem::take(&mut self.new_title);
-                ctx.push_command(TodoListCommand::CreateTodoItem {
-                    id: None,
-                    title,
-                    completed: false,
-                })
-            }
-            TodoListViewEvent::EditingStartedTodoItemTitle { id } => {
-                self.edit_state = Some(EditingItem {
-                    id,
-                    title: ctx.model().items[&id].title.clone(),
-                    request_focus: true,
-                });
-            }
-            TodoListViewEvent::EditingFinishedTodoItemTitle => {
-                self.try_finish_editing(ctx);
-            }
-            TodoListViewEvent::TodoItemDeleted { id } => {
-                self.try_finish_editing(ctx);
-                ctx.push_command(TodoListCommand::DeleteTodoItem { id });
-            }
-            TodoListViewEvent::TodoItemToggled { id } => {
-                let item = ctx.model().items.get(&id).expect("Can't find with id");
-                ctx.push_command(TodoListCommand::UpdateCompletedOfTodoItem {
-                    id,
-                    completed: !item.completed,
-                });
-            }
-            TodoListViewEvent::UndoRequested => {
-                ctx.request_undo();
-            }
-            TodoListViewEvent::RedoRequested => {
-                ctx.request_redo();
-            }
+    fn mutate(&mut self, ctx: &mut C) {
+        for e in std::mem::take(&mut self.events) {
+            self.handle_event(ctx, e);
         }
     }
 }
@@ -219,5 +182,45 @@ impl TodoListViewState {
 
     fn enter_pressed(res: &egui::Response, egui_ctx: &egui::Context) -> bool {
         res.lost_focus() && egui_ctx.input().key_pressed(egui::Key::Enter)
+    }
+
+    fn handle_event<C: TodoListContext>(&mut self, ctx: &mut C, event: TodoListViewEvent) {
+        match event {
+            TodoListViewEvent::TodoItemCreated => {
+                let title = std::mem::take(&mut self.new_title);
+                ctx.push_command(TodoListCommand::CreateTodoItem {
+                    id: None,
+                    title,
+                    completed: false,
+                })
+            }
+            TodoListViewEvent::EditingStartedTodoItemTitle { id } => {
+                self.edit_state = Some(EditingItem {
+                    id,
+                    title: ctx.model().items[&id].title.clone(),
+                    request_focus: true,
+                });
+            }
+            TodoListViewEvent::EditingFinishedTodoItemTitle => {
+                self.try_finish_editing(ctx);
+            }
+            TodoListViewEvent::TodoItemDeleted { id } => {
+                self.try_finish_editing(ctx);
+                ctx.push_command(TodoListCommand::DeleteTodoItem { id });
+            }
+            TodoListViewEvent::TodoItemToggled { id } => {
+                let item = ctx.model().items.get(&id).expect("Can't find with id");
+                ctx.push_command(TodoListCommand::UpdateCompletedOfTodoItem {
+                    id,
+                    completed: !item.completed,
+                });
+            }
+            TodoListViewEvent::UndoRequested => {
+                ctx.request_undo();
+            }
+            TodoListViewEvent::RedoRequested => {
+                ctx.request_redo();
+            }
+        }
     }
 }

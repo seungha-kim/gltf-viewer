@@ -1,8 +1,8 @@
 use eframe::egui;
 
-pub trait ViewContext<M, CMD> {
-    fn model(&self) -> &M;
-    fn push_command(&mut self, command: CMD);
+pub trait ViewContext<Model, Command> {
+    fn model(&self) -> &Model;
+    fn push_command(&mut self, command: Command);
 
     fn exit_requested(&self) -> bool;
     fn request_exit(&mut self);
@@ -18,18 +18,14 @@ pub trait UndoableViewContext {
     fn request_redo(&mut self);
 }
 
-pub trait ViewState<M, CTX: ViewContext<M, Self::Command>> {
+pub trait ViewState<Model, Context: ViewContext<Model, Self::Command>> {
     type Command;
-    type Event;
 
-    fn interact(&mut self, ui: &mut egui::Ui, ctx: &CTX) -> Vec<Self::Event>;
-    fn handle_view_event(&mut self, ctx: &mut CTX, event: Self::Event);
+    fn interact(&mut self, ui: &mut egui::Ui, ctx: &Context);
+    fn mutate(&mut self, ctx: &mut Context);
 
-    fn update(&mut self, ui: &mut egui::Ui, ctx: &mut CTX) {
-        let events = self.interact(ui, ctx);
-
-        for event in events {
-            self.handle_view_event(ctx, event);
-        }
+    fn update(&mut self, ui: &mut egui::Ui, ctx: &mut Context) {
+        self.interact(ui, ctx);
+        self.mutate(ctx);
     }
 }

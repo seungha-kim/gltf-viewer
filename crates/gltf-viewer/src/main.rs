@@ -1,16 +1,17 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
-mod ui;
-mod model;
 mod command;
+mod model;
+mod ui;
 mod undo_manager;
 
 use gltf_engine::wgpu;
 use gltf_engine::Engine;
 
-use eframe::egui;
 use crate::ui::framework::*;
 use crate::ui::root::{RootViewContext, RootViewState};
+use eframe::egui;
+use crate::command::{EngineCommand, EngineModel};
 
 fn main() {
     // Log to stdout (if you run with `RUST_LOG=debug`).
@@ -89,25 +90,18 @@ impl PaintResource {
             multiview: None,
         });
 
-        let renderer = pollster::block_on(async {
-            Engine::new(
-                device,
-                queue,
-                100, 100, target_format,
-            ).await
-        });
+        let renderer =
+            pollster::block_on(async { Engine::new(device, queue, 100, 100, target_format).await });
 
-        let sampler = device.create_sampler(
-            &wgpu::SamplerDescriptor {
-                address_mode_u: wgpu::AddressMode::ClampToEdge,
-                address_mode_v: wgpu::AddressMode::ClampToEdge,
-                address_mode_w: wgpu::AddressMode::ClampToEdge,
-                mag_filter: wgpu::FilterMode::Linear,
-                min_filter: wgpu::FilterMode::Nearest,
-                mipmap_filter: wgpu::FilterMode::Nearest,
-                ..Default::default()
-            }
-        );
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
 
         Self {
             engine: renderer,
@@ -136,7 +130,7 @@ impl PaintResource {
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: wgpu::BindingResource::Sampler(&self.sampler),
-                }
+                },
             ],
         });
         self.bind_group = Some(bind_group);
@@ -170,22 +164,29 @@ impl MyApp {
 
 impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-
         let (should_close, request_repaint) = {
             let mut write_lock = frame.wgpu_render_state().unwrap().renderer.write();
-            let paint_resource = write_lock.paint_callback_resources.get_mut::<PaintResource>().unwrap();
-            let engine = &mut paint_resource.engine;
-
+            let paint_resource = write_lock
+                .paint_callback_resources
+                .get_mut::<PaintResource>()
+                .unwrap();
+            let mut engine_model = EngineModel::new(&mut paint_resource.engine);
             let mut rvc = RootViewContextImpl {
-                engine,
+                engine_model: &engine_model,
+                commands: Vec::new(),
                 exit: false,
                 repaint: false,
             };
             egui::Area::new("Dumb Area").show(ctx, |ui| {
                 self.root_view_state.update(ui, &mut rvc);
             });
+            let (exit, repaint) = (rvc.exit, rvc.repaint);
 
-            (rvc.exit, rvc.repaint)
+            for command in rvc.commands {
+                engine_model.process_command(command);
+            }
+
+            (exit, repaint)
         };
 
         if should_close {
@@ -199,17 +200,20 @@ impl eframe::App for MyApp {
 }
 
 struct RootViewContextImpl<'a> {
-    engine: &'a mut Engine,
+    engine_model: &'a EngineModel<'a>,
+    commands: Vec<EngineCommand>,
     exit: bool,
     repaint: bool,
 }
 
-impl ViewContext<(), ()> for RootViewContextImpl<'_> {
+impl ViewContext<(), EngineCommand> for RootViewContextImpl<'_> {
     fn model(&self) -> &() {
         &()
     }
 
-    fn push_command(&mut self, _command: ()) {}
+    fn push_command(&mut self, command: EngineCommand) {
+        self.commands.push(command);
+    }
 
     fn exit_requested(&self) -> bool {
         self.exit
@@ -221,15 +225,12 @@ impl ViewContext<(), ()> for RootViewContextImpl<'_> {
 }
 
 impl RootViewContext for RootViewContextImpl<'_> {
-    fn engine_mut(&mut self) -> &mut Engine {
-        self.engine
-    }
-
-    fn engine(&self) -> &Engine {
-        self.engine
+    fn engine_model(&self) -> &EngineModel {
+        self.engine_model
     }
 
     fn request_repaint(&mut self) {
         self.repaint = true;
     }
+
 }

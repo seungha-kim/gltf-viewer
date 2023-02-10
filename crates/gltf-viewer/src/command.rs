@@ -19,22 +19,122 @@
 - Mutation 에 대한 통제권 확보 (순서를 조작한다던가, 일부 command 는 일부러 누락시킨다던가, ...)
  */
 
+use gltf_engine::{Engine, InputEvent};
+use uuid::Uuid;
+
 #[derive(Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
 pub enum TodoListCommand {
     CreateTodoItem {
-        id: Option<uuid::Uuid>,
+        id: Option<Uuid>,
         title: String,
         completed: bool,
     },
     UpdateCompletedOfTodoItem {
-        id: uuid::Uuid,
+        id: Uuid,
         completed: bool,
     },
     UpdateTitleOfTodoItem {
-        id: uuid::Uuid,
+        id: Uuid,
         title: String,
     },
     DeleteTodoItem {
-        id: uuid::Uuid,
+        id: Uuid,
     },
+}
+
+// TODO: und
+#[derive(Clone, Debug)]
+pub struct UpdateFloatCommand {
+    pub node_id: Uuid,
+    pub value: f32,
+    // commit: bool,
+}
+
+#[derive(Clone, Debug)]
+pub enum EngineCommand {
+    InputEvent(InputEvent),
+    UpdatePositionX(UpdateFloatCommand),
+    UpdatePositionY(UpdateFloatCommand),
+    UpdatePositionZ(UpdateFloatCommand),
+    UpdateScaleX(UpdateFloatCommand),
+    UpdateScaleY(UpdateFloatCommand),
+    UpdateScaleZ(UpdateFloatCommand),
+}
+
+pub struct EngineModel<'a> {
+    pub engine: &'a mut Engine,
+}
+
+impl<'a> EngineModel<'a> {
+    pub fn new(engine: &'a mut Engine) -> Self {
+        Self { engine }
+    }
+
+    pub fn engine(&self) -> &Engine {
+        self.engine
+    }
+
+    pub fn process_command(&mut self, command: EngineCommand) {
+        // TODO: undo
+        use EngineCommand::*;
+        match command {
+            InputEvent(input_event) => {
+                self.engine.input(&input_event);
+            }
+            UpdatePositionX(f) => {
+                let node = self
+                    .engine
+                    .model_root_mut()
+                    .nodes
+                    .get_mut(&f.node_id)
+                    .unwrap();
+                node.transform.position.x = f.value;
+            }
+            UpdatePositionY(f) => {
+                let node = self
+                    .engine
+                    .model_root_mut()
+                    .nodes
+                    .get_mut(&f.node_id)
+                    .unwrap();
+                node.transform.position.y = f.value;
+            }
+            UpdatePositionZ(f) => {
+                let node = self
+                    .engine
+                    .model_root_mut()
+                    .nodes
+                    .get_mut(&f.node_id)
+                    .unwrap();
+                node.transform.position.z = f.value;
+            }
+            UpdateScaleX(f) => {
+                let node = self
+                    .engine
+                    .model_root_mut()
+                    .nodes
+                    .get_mut(&f.node_id)
+                    .unwrap();
+                node.transform.scale.x = f.value;
+            }
+            UpdateScaleY(f) => {
+                let node = self
+                    .engine
+                    .model_root_mut()
+                    .nodes
+                    .get_mut(&f.node_id)
+                    .unwrap();
+                node.transform.scale.y = f.value;
+            }
+            UpdateScaleZ(f) => {
+                let node = self
+                    .engine
+                    .model_root_mut()
+                    .nodes
+                    .get_mut(&f.node_id)
+                    .unwrap();
+                node.transform.scale.z = f.value;
+            }
+        }
+    }
 }

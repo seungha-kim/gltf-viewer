@@ -2,7 +2,7 @@ mod camera;
 mod image_util;
 mod import;
 mod mesh;
-mod model;
+pub mod model;
 mod texture;
 
 use crate::camera::CameraController;
@@ -479,6 +479,10 @@ impl Engine {
         &self.model_root
     }
 
+    pub fn model_root_mut(&mut self) -> &mut model::ImportedGltf {
+        &mut self.model_root
+    }
+
     // TODO: eframe 대응
     pub fn input(&mut self, event: &InputEvent) -> bool {
         self.fly_cam_session
@@ -517,6 +521,11 @@ impl Engine {
             while let Some((node, upper_transform)) = node_stack.pop() {
                 // TODO: 매번 write_buffer 할 필요 없음
                 // TODO: cgmath::Matrix4 가 bytemuck 이랑 연동되면 좋을텐데 -> nalgebra?
+
+                if node.transform.scale.product() == 0.0 {
+                    continue;
+                }
+
                 let transform = upper_transform * node.transform.matrix();
                 let rs = Matrix3::from_cols(
                     transform.x.truncate(),
@@ -636,7 +645,7 @@ impl Engine {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum InputEvent {
     KeyPressing(AbstractKey),
     KeyUp(AbstractKey),
